@@ -1,9 +1,10 @@
 {
-  "spreadsheet_id": "ID",
+  "spreadsheet_id": "",
   "selection_method": "by_index",
   "auto_filename": true,
-  "encoding": "utf-8-sig",
+  "encoding": "utf-8",
   "newline_mode": "windows",
+  "theme": "dark",
   "sheets": [
     {
       "index": 0,

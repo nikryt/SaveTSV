@@ -27,7 +27,7 @@ class GoogleSheetsSyncApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Google Sheets Sync")
-        self.root.geometry("900x900")
+        self.root.geometry("860x1120")
 
         self.sheets_service = None
         self.is_running = False
@@ -62,13 +62,16 @@ class GoogleSheetsSyncApp:
         # Настройка трея
         self.setup_tray()
 
+        # Настройка контекстных меню
+        self.setup_context_menus()
+
     def detect_os_settings(self):
         """Определение операционной системы и настроек"""
         self.os_type = platform.system()
         self.os_release = platform.release()
 
         if self.os_type == 'Windows':
-            self.default_encoding = 'utf-8-sig'
+            self.default_encoding = 'utf-8'  # UTF-8 для Windows
             self.newline_mode = '\r\n'
             self.path_separator = '\\'
             self.is_windows = True
@@ -119,10 +122,80 @@ class GoogleSheetsSyncApp:
         """Получение пути к файлу токена"""
         return os.path.join(self.app_dir, 'token.pickle')
 
+    def setup_context_menus(self):
+        """Настройка контекстных меню для журнала"""
+        self.log_menu = tk.Menu(self.root, tearoff=0)
+        self.log_menu.add_command(label="Копировать", command=self.copy_log_selection)
+        self.log_menu.add_command(label="Выделить всё", command=self.select_all_log)
+        self.log_menu.add_separator()
+        self.log_menu.add_command(label="Очистить журнал", command=self.clear_log)
+        self.log_menu.add_command(label="Сохранить журнал в файл", command=self.save_log_to_file)
+
+        if self.log_text:
+            self.log_text.bind("<Button-3>", self.show_log_menu)
+            self.log_text.bind("<Button-2>", self.show_log_menu)
+
+    def show_log_menu(self, event):
+        """Показать контекстное меню журнала"""
+        try:
+            self.log_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.log_menu.grab_release()
+
+    def copy_log_selection(self):
+        """Копировать выделенный текст из журнала"""
+        try:
+            selected_text = self.log_text.get(tk.SEL_FIRST, tk.SEL_LAST)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(selected_text)
+            self.log("Текст скопирован в буфер обмена")
+        except tk.TclError:
+            messagebox.showinfo("Информация", "Выделите текст для копирования")
+
+    def select_all_log(self):
+        """Выделить весь текст в журнале"""
+        self.log_text.tag_add(tk.SEL, "1.0", tk.END)
+        self.log_text.mark_set(tk.INSERT, "1.0")
+        self.log_text.see(tk.INSERT)
+        return 'break'
+
+    def clear_log(self):
+        """Очистить журнал"""
+        if messagebox.askyesno("Подтверждение", "Очистить журнал?"):
+            self.log_text.delete("1.0", tk.END)
+            self.log("Журнал очищен")
+
+    def save_log_to_file(self):
+        """Сохранить журнал в файл"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            default_filename = f"log_{timestamp}.txt"
+
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("Log files", "*.log"), ("All files", "*.*")],
+                initialfile=default_filename,
+                title="Сохранить журнал"
+            )
+
+            if file_path:
+                log_content = self.log_text.get("1.0", tk.END)
+
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(log_content)
+
+                self.log(f"Журнал сохранен в: {file_path}")
+                if self.notify_success_var.get():
+                    messagebox.showinfo("Успех", f"Журнал сохранен в:\n{file_path}")
+
+        except Exception as e:
+            self.log(f"Ошибка сохранения журнала: {str(e)}")
+            if self.notify_error_var.get():
+                messagebox.showerror("Ошибка", f"Ошибка сохранения журнала: {str(e)}")
+
     def apply_theme(self):
         """Применение темы оформления"""
         if self.theme_var.get() == "dark":
-            # Темная тема
             bg_color = '#2b2b2b'
             fg_color = '#ffffff'
             select_color = '#404040'
@@ -133,7 +206,6 @@ class GoogleSheetsSyncApp:
             label_bg = '#2b2b2b'
             label_fg = '#ffffff'
         else:
-            # Светлая тема
             bg_color = '#f0f0f0'
             fg_color = '#000000'
             select_color = '#0078d7'
@@ -144,11 +216,9 @@ class GoogleSheetsSyncApp:
             label_bg = '#f0f0f0'
             label_fg = '#000000'
 
-        # Настройка стилей
         style = ttk.Style()
         style.theme_use('clam')
 
-        # Общие стили
         style.configure('TFrame', background=bg_color)
         style.configure('TLabel', background=label_bg, foreground=label_fg)
         style.configure('TLabelframe', background=bg_color, foreground=fg_color)
@@ -169,17 +239,14 @@ class GoogleSheetsSyncApp:
         style.configure('TCombobox', fieldbackground=entry_bg, foreground=entry_fg)
         style.configure('TSpinbox', fieldbackground=entry_bg, foreground=entry_fg)
 
-        # Настройка основного окна
         self.root.configure(bg=bg_color)
 
-        # Настройка текстового поля лога
         if self.log_text:
             if self.theme_var.get() == "dark":
                 self.log_text.configure(bg='#1e1e1e', fg='#ffffff', insertbackground='#ffffff')
             else:
                 self.log_text.configure(bg='#ffffff', fg='#000000', insertbackground='#000000')
 
-        # Сохраняем цвета для использования в других местах
         self.current_theme = {
             'bg': bg_color,
             'fg': fg_color,
@@ -194,6 +261,7 @@ class GoogleSheetsSyncApp:
             self.theme_var.set("light")
         self.apply_theme()
         self.log(f"Применена {'темная' if self.theme_var.get() == 'dark' else 'светлая'} тема")
+        self.theme_button.config(text="☀️ Светлая тема" if self.theme_var.get() == "dark" else "🌙 Темная тема")
 
     def create_tray_image(self, is_running=False):
         """Создание изображения для трея"""
@@ -206,11 +274,9 @@ class GoogleSheetsSyncApp:
         draw = ImageDraw.Draw(image)
 
         if is_running:
-            # Зеленая точка при работе
             draw.ellipse([20, 20, 44, 44], fill='#00ff00')
             draw.ellipse([28, 28, 36, 36], fill='#00cc00')
         else:
-            # Серая точка при остановке
             draw.ellipse([20, 20, 44, 44], fill='#808080')
             draw.ellipse([28, 28, 36, 36], fill='#666666')
 
@@ -223,7 +289,6 @@ class GoogleSheetsSyncApp:
             return
 
         try:
-            # Создаем меню
             menu = pystray.Menu(
                 pystray.MenuItem("Показать", self.show_window, default=True),
                 pystray.Menu.SEPARATOR,
@@ -247,11 +312,9 @@ class GoogleSheetsSyncApp:
                 pystray.MenuItem("Выход", self.quit_app)
             )
 
-            # Создаем иконку
             image = self.create_tray_image(self.is_running)
             self.tray_icon = pystray.Icon("google_sheets_sync", image, "Google Sheets Sync", menu)
 
-            # Запускаем трей в отдельном потоке
             self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
             self.tray_thread.start()
 
@@ -333,20 +396,36 @@ class GoogleSheetsSyncApp:
         else:
             self.stop_autosave()
 
+    def add_context_menu_to_entry(self, entry_widget):
+        """Добавление контекстного меню к полю ввода"""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Вырезать", command=lambda: entry_widget.event_generate('<<Cut>>'))
+        menu.add_command(label="Копировать", command=lambda: entry_widget.event_generate('<<Copy>>'))
+        menu.add_command(label="Вставить", command=lambda: entry_widget.event_generate('<<Paste>>'))
+        menu.add_separator()
+        menu.add_command(label="Выделить всё", command=lambda: entry_widget.select_range(0, tk.END))
+
+        def show_menu(event):
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+
+        entry_widget.bind("<Button-3>", show_menu)
+        entry_widget.bind("<Button-2>", show_menu)
+
     def init_ui(self):
         # Main frame
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Верхняя панель с темой
+        # Верхняя панель
         top_frame = ttk.Frame(main_frame)
         top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
 
-        # OS Info
         os_info = f"ОС: {self.os_type} | Кодировка: {self.default_encoding}"
         ttk.Label(top_frame, text=os_info, foreground="blue").pack(side=tk.LEFT, padx=5)
 
-        # Кнопка переключения темы
         self.theme_button = ttk.Button(top_frame,
                                        text="🌙 Темная тема" if self.theme_var.get() == "light" else "☀️ Светлая тема",
                                        command=self.toggle_theme)
@@ -362,6 +441,7 @@ class GoogleSheetsSyncApp:
         spreadsheet_entry = ttk.Entry(config_frame, textvariable=self.spreadsheet_id_var, width=50)
         spreadsheet_entry.grid(row=0, column=1, pady=2)
         ttk.Button(config_frame, text="Получить листы", command=self.get_sheet_list).grid(row=0, column=2, padx=5)
+        self.add_context_menu_to_entry(spreadsheet_entry)
 
         # Sheet selection method
         ttk.Label(config_frame, text="Метод выбора:").grid(row=1, column=0, sticky=tk.W, pady=2)
@@ -390,6 +470,7 @@ class GoogleSheetsSyncApp:
         self.encoding_combo = ttk.Combobox(encoding_frame, textvariable=self.encoding_var,
                                            values=encodings, width=20)
         self.encoding_combo.pack(side=tk.LEFT)
+        self.add_context_menu_to_entry(self.encoding_combo)
 
         # Line endings selection
         ttk.Label(config_frame, text="Переносы строк:").grid(row=4, column=0, sticky=tk.W, pady=2)
@@ -413,12 +494,14 @@ class GoogleSheetsSyncApp:
         self.sheet1_name_var = tk.StringVar()
         self.sheet1_name_combo = ttk.Combobox(self.sheet1_selection_frame, textvariable=self.sheet1_name_var, width=30)
         self.sheet1_name_combo.bind('<<ComboboxSelected>>', self.on_sheet1_selected)
+        self.add_context_menu_to_entry(self.sheet1_name_combo)
 
         self.sheet1_index_var = tk.IntVar(value=0)
         self.sheet1_index_spinbox = ttk.Spinbox(self.sheet1_selection_frame, from_=0, to=100,
                                                 textvariable=self.sheet1_index_var, width=10)
         self.sheet1_index_spinbox.bind('<KeyRelease>', self.on_sheet1_index_changed)
         self.sheet1_index_spinbox.bind('<ButtonRelease>', self.on_sheet1_index_changed)
+        self.add_context_menu_to_entry(self.sheet1_index_spinbox)
 
         self.sheet1_index_label = ttk.Label(self.sheet1_selection_frame, text="", foreground="blue")
 
@@ -426,11 +509,15 @@ class GoogleSheetsSyncApp:
         self.sheet1_filename_var = tk.StringVar(value="sheet1.tsv")
         self.sheet1_filename_entry = ttk.Entry(sheet1_frame, textvariable=self.sheet1_filename_var, width=40)
         self.sheet1_filename_entry.grid(row=1, column=1, sticky=tk.W, pady=2)
+        self.add_context_menu_to_entry(self.sheet1_filename_entry)
 
         ttk.Label(sheet1_frame, text="Проверять каждые (сек):").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.sheet1_check_interval_var = tk.IntVar(value=30)
-        ttk.Spinbox(sheet1_frame, from_=5, to=3600, textvariable=self.sheet1_check_interval_var,
-                    width=10).grid(row=2, column=1, sticky=tk.W, pady=2)
+        sheet1_interval_spinbox = ttk.Spinbox(sheet1_frame, from_=5, to=3600,
+                                              textvariable=self.sheet1_check_interval_var,
+                                              width=10)
+        sheet1_interval_spinbox.grid(row=2, column=1, sticky=tk.W, pady=2)
+        self.add_context_menu_to_entry(sheet1_interval_spinbox)
 
         self.sheet1_save_enabled_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(sheet1_frame, text="Сохранять этот лист",
@@ -447,12 +534,14 @@ class GoogleSheetsSyncApp:
         self.sheet2_name_var = tk.StringVar()
         self.sheet2_name_combo = ttk.Combobox(self.sheet2_selection_frame, textvariable=self.sheet2_name_var, width=30)
         self.sheet2_name_combo.bind('<<ComboboxSelected>>', self.on_sheet2_selected)
+        self.add_context_menu_to_entry(self.sheet2_name_combo)
 
         self.sheet2_index_var = tk.IntVar(value=1)
         self.sheet2_index_spinbox = ttk.Spinbox(self.sheet2_selection_frame, from_=0, to=100,
                                                 textvariable=self.sheet2_index_var, width=10)
         self.sheet2_index_spinbox.bind('<KeyRelease>', self.on_sheet2_index_changed)
         self.sheet2_index_spinbox.bind('<ButtonRelease>', self.on_sheet2_index_changed)
+        self.add_context_menu_to_entry(self.sheet2_index_spinbox)
 
         self.sheet2_index_label = ttk.Label(self.sheet2_selection_frame, text="", foreground="blue")
 
@@ -460,11 +549,15 @@ class GoogleSheetsSyncApp:
         self.sheet2_filename_var = tk.StringVar(value="sheet2.tsv")
         self.sheet2_filename_entry = ttk.Entry(sheet2_frame, textvariable=self.sheet2_filename_var, width=40)
         self.sheet2_filename_entry.grid(row=1, column=1, sticky=tk.W, pady=2)
+        self.add_context_menu_to_entry(self.sheet2_filename_entry)
 
         ttk.Label(sheet2_frame, text="Проверять каждые (сек):").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.sheet2_check_interval_var = tk.IntVar(value=300)
-        ttk.Spinbox(sheet2_frame, from_=5, to=3600, textvariable=self.sheet2_check_interval_var,
-                    width=10).grid(row=2, column=1, sticky=tk.W, pady=2)
+        sheet2_interval_spinbox = ttk.Spinbox(sheet2_frame, from_=5, to=3600,
+                                              textvariable=self.sheet2_check_interval_var,
+                                              width=10)
+        sheet2_interval_spinbox.grid(row=2, column=1, sticky=tk.W, pady=2)
+        self.add_context_menu_to_entry(sheet2_interval_spinbox)
 
         self.sheet2_save_enabled_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(sheet2_frame, text="Сохранять этот лист",
@@ -476,7 +569,10 @@ class GoogleSheetsSyncApp:
 
         ttk.Label(output_frame, text="Папка:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.folder_path_var = tk.StringVar()
-        ttk.Entry(output_frame, textvariable=self.folder_path_var, width=40).grid(row=0, column=1, pady=2)
+        folder_entry = ttk.Entry(output_frame, textvariable=self.folder_path_var, width=40)
+        folder_entry.grid(row=0, column=1, pady=2)
+        self.add_context_menu_to_entry(folder_entry)
+
         ttk.Button(output_frame, text="Обзор", command=self.browse_folder).grid(row=0, column=2, padx=5)
         ttk.Button(output_frame, text="По умолчанию", command=self.set_default_folder).grid(row=0, column=3, padx=5)
 
@@ -522,6 +618,8 @@ class GoogleSheetsSyncApp:
 
         ttk.Button(button_frame, text="Свернуть в трей", command=self.hide_window).pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(button_frame, text="Сохранить журнал", command=self.save_log_to_file).pack(side=tk.LEFT, padx=5)
+
         # Status
         self.status_var = tk.StringVar(value="Статус: Не авторизован")
         status_label = ttk.Label(main_frame, textvariable=self.status_var, foreground="red", font=("Arial", 10, "bold"))
@@ -532,10 +630,12 @@ class GoogleSheetsSyncApp:
         self.log_text = scrolledtext.ScrolledText(main_frame, height=12, width=90)
         self.log_text.grid(row=7, column=0, pady=5)
 
-        # Выводим информацию об ОС
+        # Выводим информацию
         self.log(f"Операционная система: {self.os_type} {self.os_release}")
         self.log(f"Кодировка по умолчанию: {self.default_encoding}")
         self.log(f"Папка приложения: {self.app_dir}")
+        self.log("Используйте правую кнопку мыши для копирования из журнала")
+        self.log("Стандартные сочетания клавиш (Ctrl+C, Ctrl+V) работают в полях ввода")
 
         # Initialize UI state
         self.toggle_selection_method()
@@ -811,7 +911,6 @@ class GoogleSheetsSyncApp:
                 newline_setting = config.get('newline_mode', 'windows' if self.is_windows else 'unix')
                 self.newline_var.set(newline_setting)
 
-                # Загружаем тему
                 theme = config.get('theme', 'light')
                 self.theme_var.set(theme)
 
