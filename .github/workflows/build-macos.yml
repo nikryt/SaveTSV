@@ -1,12 +1,14 @@
-name: Build macOS App with DMG
+name: Build macOS App Bundle
 
 on:
   push:
     branches: [ main ]
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
-  build:
+  build-app-bundle:
     runs-on: macos-latest
 
     steps:
@@ -18,13 +20,21 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/Library/Caches/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
 
-    - name: Build .app bundle
+    - name: Build .app bundle with PyInstaller
       run: |
         pyinstaller \
           --windowed \
@@ -32,51 +42,67 @@ jobs:
           --osx-bundle-identifier "com.googlesheets.sync" \
           --hidden-import=googleapiclient.discovery \
           --hidden-import=google_auth_oauthlib \
+          --hidden-import=google.auth.transport.requests \
+          --hidden-import=google.oauth2.credentials \
           --collect-all googleapiclient \
           --collect-all google_auth_oauthlib \
           main.py
 
-    - name: Create custom DMG with AppleScript
+    - name: Verify .app bundle structure
       run: |
-        # Создаем папку для DMG
+        echo "=== Checking .app bundle ==="
+        ls -la dist/
+        echo ""
+        echo "=== Contents of .app ==="
+        ls -la dist/GoogleSheetsSync.app/
+        echo ""
+        echo "=== Contents of MacOS ==="
+        ls -la dist/GoogleSheetsSync.app/Contents/MacOS/
+        echo ""
+        echo "=== File type ==="
+        file dist/GoogleSheetsSync.app/Contents/MacOS/GoogleSheetsSync
+
+    - name: Make executable
+      run: |
+        chmod +x dist/GoogleSheetsSync.app/Contents/MacOS/GoogleSheetsSync
+
+    - name: Create DMG using hdiutil (без create-dmg)
+      run: |
+        # Создаем временную папку для DMG
         mkdir -p dmg_staging
         cp -r dist/GoogleSheetsSync.app dmg_staging/
+        
+        # Создаем симлинк на Applications
         ln -s /Applications dmg_staging/Applications
         
-        # Создаем DMG
+        # Создаем DMG с помощью hdiutil
         hdiutil create \
           -volname "Google Sheets Sync" \
           -srcfolder dmg_staging \
           -ov \
           -format UDZO \
-          -fs HFS+ \
           "GoogleSheetsSync.dmg"
-        
-        # Монтируем DMG для настройки
-        hdiutil attach GoogleSheetsSync.dmg
-        
-        # Настройка вида папки (опционально)
-        osascript <<'EOF'
-        tell application "Finder"
-          tell disk "Google Sheets Sync"
-            open
-            set current view of container window to icon view
-            set toolbar visible of container window to false
-            set statusbar visible of container window to false
-            set the bounds of container window to {400, 100, 1000, 500}
-            set theViewOptions to the icon view options of container window
-            set arrangement of theViewOptions to not arranged
-            set icon size of theViewOptions to 128
-            set position of item "GoogleSheetsSync.app" of container window to {200, 200}
-            set position of item "Applications" of container window to {500, 200}
-            update without registering applications
-            close
-          end tell
-        end tell
-        EOF
-        
-        # Отмонтируем DMG
-        hdiutil detach /Volumes/Google\ Sheets\ Sync
+
+    - name: Verify DMG
+      run: |
+        ls -la GoogleSheetsSync.dmg
+        hdiutil verify GoogleSheetsSync.dmg
+
+    - name: Create ZIP of .app bundle
+      run: |
+        # Создаем ZIP с .app bundle
+        cd dist
+        zip -r ../GoogleSheetsSync.app.zip GoogleSheetsSync.app
+        cd ..
+        ls -la GoogleSheetsSync.app.zip
+
+    - name: Upload .app bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: GoogleSheetsSync-app-bundle
+        path: dist/GoogleSheetsSync.app
+        retention-days: 30
+        compression-level: 6
 
     - name: Upload DMG
       uses: actions/upload-artifact@v4
@@ -85,6 +111,25 @@ jobs:
         path: GoogleSheetsSync.dmg
         retention-days: 30
 
+    - name: Upload ZIP
+      uses: actions/upload-artifact@v4
+      with:
+        name: GoogleSheetsSync-app-zip
+        path: GoogleSheetsSync.app.zip
+        retention-days: 30
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          GoogleSheetsSync.dmg
+          GoogleSheetsSync.app.zip
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 #name: Build macOS App (Simple)
 #
 #on:
