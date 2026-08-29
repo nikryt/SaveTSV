@@ -13,22 +13,36 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 import pickle
 
+# Для трея
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+
+    TRAY_AVAILABLE = True
+except ImportError:
+    TRAY_AVAILABLE = False
+
 
 class GoogleSheetsSyncApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Google Sheets Sync")
-        self.root.geometry("800x850")
+        self.root.geometry("900x900")
 
         self.sheets_service = None
         self.is_running = False
-        self.last_data_hash = None
         self.monitoring_thread = None
         self.scheduler_thread = None
         self.config_file = 'config.json'
         self.available_sheets = []
         self.sheet_names_cache = {}
         self.auto_filename = tk.BooleanVar(value=True)
+        self.tray_icon = None
+        self.theme_var = tk.StringVar(value="light")
+
+        # Данные для мониторинга
+        self.last_data_hash = {}
+        self.last_check_time = {}
 
         # Инициализируем log_text как None
         self.log_text = None
@@ -42,43 +56,44 @@ class GoogleSheetsSyncApp:
         self.init_ui()
         self.load_config()
 
+        # Применяем тему
+        self.apply_theme()
+
+        # Настройка трея
+        self.setup_tray()
+
     def detect_os_settings(self):
         """Определение операционной системы и настроек"""
         self.os_type = platform.system()
         self.os_release = platform.release()
 
         if self.os_type == 'Windows':
-            self.default_encoding = 'utf-8-sig'  # Для Excel на Windows
-            self.newline_mode = '\r\n'  # Windows line endings
+            self.default_encoding = 'utf-8-sig'
+            self.newline_mode = '\r\n'
             self.path_separator = '\\'
             self.is_windows = True
             self.is_macos = False
         elif self.os_type == 'Darwin':
-            self.default_encoding = 'utf-8'  # Стандарт для macOS
-            self.newline_mode = '\n'  # Unix line endings
+            self.default_encoding = 'utf-8'
+            self.newline_mode = '\n'
             self.path_separator = '/'
             self.is_windows = False
             self.is_macos = True
-        else:  # Linux и другие Unix-подобные
+        else:
             self.default_encoding = 'utf-8'
             self.newline_mode = '\n'
             self.path_separator = '/'
             self.is_windows = False
             self.is_macos = False
 
-        # Не вызываем log здесь, так как log_text еще не создан
         print(f"Операционная система: {self.os_type} {self.os_release}")
 
     def get_app_directory(self):
         """Получение правильной директории приложения"""
         if getattr(sys, 'frozen', False):
-            # Если приложение запущено как exe/app (PyInstaller)
             if hasattr(self, 'is_macos') and self.is_macos:
-                # Для macOS .app bundle
                 if '.app' in sys.executable:
-                    # Находим папку Contents/MacOS
                     app_path = os.path.dirname(sys.executable)
-                    # Поднимаемся на 2 уровня: MacOS -> Contents -> .app
                     bundle_path = os.path.dirname(os.path.dirname(app_path))
                     return bundle_path
                 else:
@@ -86,7 +101,6 @@ class GoogleSheetsSyncApp:
             else:
                 return os.path.dirname(os.path.abspath(sys.executable))
         else:
-            # Если запущено как скрипт Python
             return os.path.dirname(os.path.abspath(__file__))
 
     def get_default_save_folder(self):
@@ -105,17 +119,238 @@ class GoogleSheetsSyncApp:
         """Получение пути к файлу токена"""
         return os.path.join(self.app_dir, 'token.pickle')
 
+    def apply_theme(self):
+        """Применение темы оформления"""
+        if self.theme_var.get() == "dark":
+            # Темная тема
+            bg_color = '#2b2b2b'
+            fg_color = '#ffffff'
+            select_color = '#404040'
+            entry_bg = '#3c3c3c'
+            entry_fg = '#ffffff'
+            button_bg = '#404040'
+            button_fg = '#ffffff'
+            label_bg = '#2b2b2b'
+            label_fg = '#ffffff'
+        else:
+            # Светлая тема
+            bg_color = '#f0f0f0'
+            fg_color = '#000000'
+            select_color = '#0078d7'
+            entry_bg = '#ffffff'
+            entry_fg = '#000000'
+            button_bg = '#e1e1e1'
+            button_fg = '#000000'
+            label_bg = '#f0f0f0'
+            label_fg = '#000000'
+
+        # Настройка стилей
+        style = ttk.Style()
+        style.theme_use('clam')
+
+        # Общие стили
+        style.configure('TFrame', background=bg_color)
+        style.configure('TLabel', background=label_bg, foreground=label_fg)
+        style.configure('TLabelframe', background=bg_color, foreground=fg_color)
+        style.configure('TLabelframe.Label', background=bg_color, foreground=fg_color)
+        style.configure('TButton', background=button_bg, foreground=button_fg)
+        style.map('TButton',
+                  background=[('active', select_color), ('pressed', select_color)],
+                  foreground=[('active', '#ffffff'), ('pressed', '#ffffff')])
+        style.configure('TCheckbutton', background=bg_color, foreground=fg_color)
+        style.map('TCheckbutton',
+                  background=[('active', bg_color)],
+                  foreground=[('active', fg_color)])
+        style.configure('TRadiobutton', background=bg_color, foreground=fg_color)
+        style.map('TRadiobutton',
+                  background=[('active', bg_color)],
+                  foreground=[('active', fg_color)])
+        style.configure('TEntry', fieldbackground=entry_bg, foreground=entry_fg)
+        style.configure('TCombobox', fieldbackground=entry_bg, foreground=entry_fg)
+        style.configure('TSpinbox', fieldbackground=entry_bg, foreground=entry_fg)
+
+        # Настройка основного окна
+        self.root.configure(bg=bg_color)
+
+        # Настройка текстового поля лога
+        if self.log_text:
+            if self.theme_var.get() == "dark":
+                self.log_text.configure(bg='#1e1e1e', fg='#ffffff', insertbackground='#ffffff')
+            else:
+                self.log_text.configure(bg='#ffffff', fg='#000000', insertbackground='#000000')
+
+        # Сохраняем цвета для использования в других местах
+        self.current_theme = {
+            'bg': bg_color,
+            'fg': fg_color,
+            'select': select_color
+        }
+
+    def toggle_theme(self):
+        """Переключение темы"""
+        if self.theme_var.get() == "light":
+            self.theme_var.set("dark")
+        else:
+            self.theme_var.set("light")
+        self.apply_theme()
+        self.log(f"Применена {'темная' if self.theme_var.get() == 'dark' else 'светлая'} тема")
+
+    def create_tray_image(self, is_running=False):
+        """Создание изображения для трея"""
+        if self.theme_var.get() == "dark":
+            bg_color = '#2b2b2b' if not is_running else '#004d00'
+        else:
+            bg_color = '#f0f0f0' if not is_running else '#00cc00'
+
+        image = Image.new('RGB', (64, 64), color=bg_color)
+        draw = ImageDraw.Draw(image)
+
+        if is_running:
+            # Зеленая точка при работе
+            draw.ellipse([20, 20, 44, 44], fill='#00ff00')
+            draw.ellipse([28, 28, 36, 36], fill='#00cc00')
+        else:
+            # Серая точка при остановке
+            draw.ellipse([20, 20, 44, 44], fill='#808080')
+            draw.ellipse([28, 28, 36, 36], fill='#666666')
+
+        return image
+
+    def setup_tray(self):
+        """Настройка иконки в трее"""
+        if not TRAY_AVAILABLE:
+            self.log("Библиотеки для трея не установлены. Установите: pip install pystray pillow")
+            return
+
+        try:
+            # Создаем меню
+            menu = pystray.Menu(
+                pystray.MenuItem("Показать", self.show_window, default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem(
+                    "Автосохранение",
+                    pystray.Menu(
+                        pystray.MenuItem(
+                            "Включить",
+                            self.enable_autosave_from_tray,
+                            checked=lambda item: self.is_running
+                        ),
+                        pystray.MenuItem(
+                            "Выключить",
+                            self.disable_autosave_from_tray,
+                            checked=lambda item: not self.is_running
+                        )
+                    )
+                ),
+                pystray.MenuItem("Сохранить сейчас", self.save_now_from_tray),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Выход", self.quit_app)
+            )
+
+            # Создаем иконку
+            image = self.create_tray_image(self.is_running)
+            self.tray_icon = pystray.Icon("google_sheets_sync", image, "Google Sheets Sync", menu)
+
+            # Запускаем трей в отдельном потоке
+            self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+            self.tray_thread.start()
+
+            self.log("Иконка в трее создана")
+        except Exception as e:
+            self.log(f"Ошибка создания иконки в трее: {str(e)}")
+
+    def update_tray_icon(self):
+        """Обновление иконки в трее"""
+        if self.tray_icon:
+            self.tray_icon.icon = self.create_tray_image(self.is_running)
+
+    def show_window(self):
+        """Показать окно"""
+        self.root.after(0, self._show_window)
+
+    def _show_window(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def hide_window(self):
+        """Скрыть окно в трей"""
+        self.root.withdraw()
+        if self.tray_icon:
+            self.tray_icon.notify("Приложение свернуто в трей", "Google Sheets Sync продолжает работать")
+
+    def quit_app(self):
+        """Полное закрытие приложения"""
+        self.root.after(0, self.on_closing)
+
+    def enable_autosave_from_tray(self):
+        """Включение автосохранения из трея"""
+        if not self.is_running:
+            self.root.after(0, self.start_autosave)
+
+    def disable_autosave_from_tray(self):
+        """Выключение автосохранения из трея"""
+        if self.is_running:
+            self.root.after(0, self.stop_autosave)
+
+    def save_now_from_tray(self):
+        """Сохранение из трея"""
+        self.root.after(0, self.save_now)
+
+    def start_autosave(self):
+        """Запуск автосохранения"""
+        if not self.sheets_service:
+            if self.notify_error_var.get():
+                messagebox.showwarning("Предупреждение", "Сначала авторизуйтесь")
+            return
+
+        self.is_running = True
+        self.start_btn.config(text="Остановить авто-сохранение")
+        self.start_monitoring()
+        self.update_tray_icon()
+
+        self.log("Авто-сохранение запущено")
+
+        if self.tray_icon:
+            self.tray_icon.notify("Автосохранение включено", "Google Sheets Sync начал мониторинг изменений")
+
+    def stop_autosave(self):
+        """Остановка автосохранения"""
+        self.is_running = False
+        self.start_btn.config(text="Запустить авто-сохранение")
+        self.stop_monitoring()
+        self.update_tray_icon()
+
+        self.log("Авто-сохранение остановлено")
+
+        if self.tray_icon:
+            self.tray_icon.notify("Автосохранение выключено", "Мониторинг изменений остановлен")
+
+    def toggle_auto_save(self):
+        """Переключение автосохранения"""
+        if not self.is_running:
+            self.start_autosave()
+        else:
+            self.stop_autosave()
+
     def init_ui(self):
         # Main frame
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # OS Info
-        os_frame = ttk.LabelFrame(main_frame, text="Информация о системе", padding="5")
-        os_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
+        # Верхняя панель с темой
+        top_frame = ttk.Frame(main_frame)
+        top_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=5)
 
-        os_info = f"ОС: {self.os_type} | Кодировка: {self.default_encoding} | Переносы строк: {repr(self.newline_mode)}"
-        ttk.Label(os_frame, text=os_info, foreground="blue").pack(anchor=tk.W)
+        # OS Info
+        os_info = f"ОС: {self.os_type} | Кодировка: {self.default_encoding}"
+        ttk.Label(top_frame, text=os_info, foreground="blue").pack(side=tk.LEFT, padx=5)
+
+        # Кнопка переключения темы
+        self.theme_button = ttk.Button(top_frame,
+                                       text="🌙 Темная тема" if self.theme_var.get() == "light" else "☀️ Светлая тема",
+                                       command=self.toggle_theme)
+        self.theme_button.pack(side=tk.RIGHT, padx=5)
 
         # Configuration section
         config_frame = ttk.LabelFrame(main_frame, text="Настройки подключения", padding="10")
@@ -155,8 +390,6 @@ class GoogleSheetsSyncApp:
         self.encoding_combo = ttk.Combobox(encoding_frame, textvariable=self.encoding_var,
                                            values=encodings, width=20)
         self.encoding_combo.pack(side=tk.LEFT)
-        ttk.Label(encoding_frame, text="(рекомендуется для этой ОС: {})".format(
-            self.default_encoding)).pack(side=tk.LEFT, padx=5)
 
         # Line endings selection
         ttk.Label(config_frame, text="Переносы строк:").grid(row=4, column=0, sticky=tk.W, pady=2)
@@ -169,51 +402,73 @@ class GoogleSheetsSyncApp:
         ttk.Radiobutton(newline_frame, text="Unix (LF)", variable=self.newline_var,
                         value="unix").pack(side=tk.LEFT, padx=5)
 
-        # Sheet 1
-        ttk.Label(config_frame, text="Лист 1:").grid(row=5, column=0, sticky=tk.W, pady=2)
-        self.sheet1_frame = ttk.Frame(config_frame)
-        self.sheet1_frame.grid(row=5, column=1, sticky=tk.W, pady=2)
+        # Sheet 1 settings
+        sheet1_frame = ttk.LabelFrame(config_frame, text="Лист 1", padding="5")
+        sheet1_frame.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+
+        ttk.Label(sheet1_frame, text="Лист:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.sheet1_selection_frame = ttk.Frame(sheet1_frame)
+        self.sheet1_selection_frame.grid(row=0, column=1, sticky=tk.W, pady=2)
 
         self.sheet1_name_var = tk.StringVar()
-        self.sheet1_name_combo = ttk.Combobox(self.sheet1_frame, textvariable=self.sheet1_name_var, width=40)
-        self.sheet1_name_combo.pack(side=tk.LEFT)
+        self.sheet1_name_combo = ttk.Combobox(self.sheet1_selection_frame, textvariable=self.sheet1_name_var, width=30)
         self.sheet1_name_combo.bind('<<ComboboxSelected>>', self.on_sheet1_selected)
 
         self.sheet1_index_var = tk.IntVar(value=0)
-        self.sheet1_index_spinbox = ttk.Spinbox(self.sheet1_frame, from_=0, to=100,
+        self.sheet1_index_spinbox = ttk.Spinbox(self.sheet1_selection_frame, from_=0, to=100,
                                                 textvariable=self.sheet1_index_var, width=10)
         self.sheet1_index_spinbox.bind('<KeyRelease>', self.on_sheet1_index_changed)
         self.sheet1_index_spinbox.bind('<ButtonRelease>', self.on_sheet1_index_changed)
 
-        self.sheet1_index_label = ttk.Label(self.sheet1_frame, text="", foreground="blue")
+        self.sheet1_index_label = ttk.Label(self.sheet1_selection_frame, text="", foreground="blue")
 
-        ttk.Label(config_frame, text="Файл 1:").grid(row=6, column=0, sticky=tk.W, pady=2)
+        ttk.Label(sheet1_frame, text="Файл:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.sheet1_filename_var = tk.StringVar(value="sheet1.tsv")
-        self.sheet1_filename_entry = ttk.Entry(config_frame, textvariable=self.sheet1_filename_var, width=50)
-        self.sheet1_filename_entry.grid(row=6, column=1, pady=2)
+        self.sheet1_filename_entry = ttk.Entry(sheet1_frame, textvariable=self.sheet1_filename_var, width=40)
+        self.sheet1_filename_entry.grid(row=1, column=1, sticky=tk.W, pady=2)
 
-        # Sheet 2
-        ttk.Label(config_frame, text="Лист 2:").grid(row=7, column=0, sticky=tk.W, pady=2)
-        self.sheet2_frame = ttk.Frame(config_frame)
-        self.sheet2_frame.grid(row=7, column=1, sticky=tk.W, pady=2)
+        ttk.Label(sheet1_frame, text="Проверять каждые (сек):").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.sheet1_check_interval_var = tk.IntVar(value=30)
+        ttk.Spinbox(sheet1_frame, from_=5, to=3600, textvariable=self.sheet1_check_interval_var,
+                    width=10).grid(row=2, column=1, sticky=tk.W, pady=2)
+
+        self.sheet1_save_enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(sheet1_frame, text="Сохранять этот лист",
+                        variable=self.sheet1_save_enabled_var).grid(row=3, column=1, sticky=tk.W, pady=2)
+
+        # Sheet 2 settings
+        sheet2_frame = ttk.LabelFrame(config_frame, text="Лист 2", padding="5")
+        sheet2_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+
+        ttk.Label(sheet2_frame, text="Лист:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.sheet2_selection_frame = ttk.Frame(sheet2_frame)
+        self.sheet2_selection_frame.grid(row=0, column=1, sticky=tk.W, pady=2)
 
         self.sheet2_name_var = tk.StringVar()
-        self.sheet2_name_combo = ttk.Combobox(self.sheet2_frame, textvariable=self.sheet2_name_var, width=40)
-        self.sheet2_name_combo.pack(side=tk.LEFT)
+        self.sheet2_name_combo = ttk.Combobox(self.sheet2_selection_frame, textvariable=self.sheet2_name_var, width=30)
         self.sheet2_name_combo.bind('<<ComboboxSelected>>', self.on_sheet2_selected)
 
         self.sheet2_index_var = tk.IntVar(value=1)
-        self.sheet2_index_spinbox = ttk.Spinbox(self.sheet2_frame, from_=0, to=100,
+        self.sheet2_index_spinbox = ttk.Spinbox(self.sheet2_selection_frame, from_=0, to=100,
                                                 textvariable=self.sheet2_index_var, width=10)
         self.sheet2_index_spinbox.bind('<KeyRelease>', self.on_sheet2_index_changed)
         self.sheet2_index_spinbox.bind('<ButtonRelease>', self.on_sheet2_index_changed)
 
-        self.sheet2_index_label = ttk.Label(self.sheet2_frame, text="", foreground="blue")
+        self.sheet2_index_label = ttk.Label(self.sheet2_selection_frame, text="", foreground="blue")
 
-        ttk.Label(config_frame, text="Файл 2:").grid(row=8, column=0, sticky=tk.W, pady=2)
+        ttk.Label(sheet2_frame, text="Файл:").grid(row=1, column=0, sticky=tk.W, pady=2)
         self.sheet2_filename_var = tk.StringVar(value="sheet2.tsv")
-        self.sheet2_filename_entry = ttk.Entry(config_frame, textvariable=self.sheet2_filename_var, width=50)
-        self.sheet2_filename_entry.grid(row=8, column=1, pady=2)
+        self.sheet2_filename_entry = ttk.Entry(sheet2_frame, textvariable=self.sheet2_filename_var, width=40)
+        self.sheet2_filename_entry.grid(row=1, column=1, sticky=tk.W, pady=2)
+
+        ttk.Label(sheet2_frame, text="Проверять каждые (сек):").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.sheet2_check_interval_var = tk.IntVar(value=300)
+        ttk.Spinbox(sheet2_frame, from_=5, to=3600, textvariable=self.sheet2_check_interval_var,
+                    width=10).grid(row=2, column=1, sticky=tk.W, pady=2)
+
+        self.sheet2_save_enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(sheet2_frame, text="Сохранять этот лист",
+                        variable=self.sheet2_save_enabled_var).grid(row=3, column=1, sticky=tk.W, pady=2)
 
         # Output settings
         output_frame = ttk.LabelFrame(main_frame, text="Настройки сохранения", padding="10")
@@ -228,17 +483,6 @@ class GoogleSheetsSyncApp:
         default_folder = self.get_default_save_folder()
         ttk.Label(output_frame, text=f"По умолчанию: {default_folder}",
                   foreground="gray").grid(row=1, column=1, sticky=tk.W, pady=2)
-
-        ttk.Label(output_frame, text="Интервал (мин):").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.interval_var = tk.IntVar(value=5)
-        ttk.Spinbox(output_frame, from_=1, to=1440, textvariable=self.interval_var, width=10).grid(row=2, column=1,
-                                                                                                   sticky=tk.W, pady=2)
-
-        self.auto_monitor_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(output_frame, text="Автоопределение изменений", variable=self.auto_monitor_var).grid(row=3,
-                                                                                                             column=1,
-                                                                                                             sticky=tk.W,
-                                                                                                             pady=2)
 
         # Notification settings
         notification_frame = ttk.LabelFrame(main_frame, text="Настройки уведомлений", padding="10")
@@ -276,6 +520,8 @@ class GoogleSheetsSyncApp:
 
         ttk.Button(button_frame, text="Сохранить конфигурацию", command=self.save_config).pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(button_frame, text="Свернуть в трей", command=self.hide_window).pack(side=tk.LEFT, padx=5)
+
         # Status
         self.status_var = tk.StringVar(value="Статус: Не авторизован")
         status_label = ttk.Label(main_frame, textvariable=self.status_var, foreground="red", font=("Arial", 10, "bold"))
@@ -286,7 +532,7 @@ class GoogleSheetsSyncApp:
         self.log_text = scrolledtext.ScrolledText(main_frame, height=12, width=90)
         self.log_text.grid(row=7, column=0, pady=5)
 
-        # Теперь, когда log_text создан, выводим информацию об ОС
+        # Выводим информацию об ОС
         self.log(f"Операционная система: {self.os_type} {self.os_release}")
         self.log(f"Кодировка по умолчанию: {self.default_encoding}")
         self.log(f"Папка приложения: {self.app_dir}")
@@ -296,7 +542,7 @@ class GoogleSheetsSyncApp:
         self.toggle_auto_filename()
 
     def get_newline_chars(self):
-        """Получение символов переноса строки в зависимости от настроек"""
+        """Получение символов переноса строки"""
         if self.newline_var.get() == 'windows':
             return '\r\n'
         else:
@@ -328,15 +574,12 @@ class GoogleSheetsSyncApp:
             self.sheet2_filename_var.set(f"{safe_filename}.tsv")
 
     def sanitize_filename(self, filename):
-        """Очистка имени файла от недопустимых символов для разных ОС"""
-        # Общие недопустимые символы для Windows и macOS
+        """Очистка имени файла от недопустимых символов"""
         invalid_chars = '<>:"/\\|?*'
         for char in invalid_chars:
             filename = filename.replace(char, '_')
 
-        # Дополнительные проверки для Windows
         if self.is_windows:
-            # Зарезервированные имена в Windows
             reserved_names = ['CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3',
                               'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
                               'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6',
@@ -346,10 +589,8 @@ class GoogleSheetsSyncApp:
             if base_name in reserved_names:
                 filename = f"_{filename}"
 
-        # Убираем пробелы в начале и конце
         filename = filename.strip()
 
-        # Убираем точки в конце (проблема для Windows)
         if self.is_windows:
             filename = filename.rstrip('.')
 
@@ -393,9 +634,9 @@ class GoogleSheetsSyncApp:
         """Переключение между выбором по имени и по индексу"""
         method = self.selection_method.get()
 
-        for widget in self.sheet1_frame.winfo_children():
+        for widget in self.sheet1_selection_frame.winfo_children():
             widget.pack_forget()
-        for widget in self.sheet2_frame.winfo_children():
+        for widget in self.sheet2_selection_frame.winfo_children():
             widget.pack_forget()
 
         if method == "by_name":
@@ -413,7 +654,7 @@ class GoogleSheetsSyncApp:
         self.update_filename_from_sheet()
 
     def update_index_labels(self):
-        """Обновление меток с именами листов при выборе по индексу"""
+        """Обновление меток с именами листов"""
         if self.available_sheets:
             try:
                 index1 = self.sheet1_index_var.get()
@@ -442,15 +683,38 @@ class GoogleSheetsSyncApp:
         if self.notify_success_var.get():
             messagebox.showinfo("Папка", f"Установлена папка:\n{default_folder}")
 
+    def validate_spreadsheet_id(self, spreadsheet_id):
+        """Проверка и нормализация ID таблицы"""
+        spreadsheet_id = spreadsheet_id.strip()
+
+        if 'docs.google.com' in spreadsheet_id:
+            import re
+            match = re.search(r'/d/([a-zA-Z0-9-_]+)', spreadsheet_id)
+            if match:
+                spreadsheet_id = match.group(1)
+                self.log(f"Извлечен ID из URL: {spreadsheet_id}")
+                self.spreadsheet_id_var.set(spreadsheet_id)
+            else:
+                self.log("Не удалось извлечь ID из URL")
+                return None
+
+        if not spreadsheet_id or len(spreadsheet_id) < 10:
+            self.log(f"Некорректный ID таблицы: {spreadsheet_id}")
+            return None
+
+        return spreadsheet_id
+
     def get_sheet_list(self):
         """Получение списка листов из Google Sheets"""
         if not self.sheets_service:
             messagebox.showwarning("Предупреждение", "Сначала авторизуйтесь")
             return
 
-        spreadsheet_id = self.spreadsheet_id_var.get().strip()
+        spreadsheet_id = self.validate_spreadsheet_id(self.spreadsheet_id_var.get())
+
         if not spreadsheet_id:
-            messagebox.showwarning("Предупреждение", "Введите Spreadsheet ID")
+            if self.notify_error_var.get():
+                messagebox.showerror("Ошибка", "Некорректный ID таблицы")
             return
 
         try:
@@ -484,19 +748,37 @@ class GoogleSheetsSyncApp:
                                     "\n".join(f"{i}. {name}" for i, name in enumerate(self.available_sheets)))
 
         except Exception as e:
-            self.log(f"Ошибка получения списка листов: {str(e)}")
-            if self.notify_error_var.get():
-                messagebox.showerror("Ошибка", f"Ошибка получения списка листов: {str(e)}")
+            error_message = str(e)
+
+            if "404" in error_message:
+                self.log("Таблица не найдена. Проверьте ID таблицы.")
+                if self.notify_error_var.get():
+                    messagebox.showerror("Ошибка",
+                                         "Таблица не найдена.\n\n"
+                                         "Проверьте:\n"
+                                         "1. Правильность ID таблицы\n"
+                                         "2. Доступ к таблице для вашего аккаунта\n"
+                                         "3. Что таблица не удалена")
+            elif "403" in error_message:
+                self.log("Нет доступа к таблице.")
+                if self.notify_error_var.get():
+                    messagebox.showerror("Ошибка",
+                                         "Нет доступа к таблице.\n\n"
+                                         "Убедитесь, что:\n"
+                                         "1. Таблица доступна для вашего аккаунта\n"
+                                         "2. Вы вошли в правильный Google аккаунт")
+            else:
+                self.log(f"Ошибка получения списка листов: {error_message}")
+                if self.notify_error_var.get():
+                    messagebox.showerror("Ошибка", f"Ошибка получения списка листов: {error_message}")
 
     def log(self, message):
         """Логирование с проверкой наличия log_text"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_message = f"[{timestamp}] {message}"
 
-        # Выводим в консоль для отладки
         print(log_message)
 
-        # Выводим в GUI если log_text создан
         if self.log_text is not None:
             self.log_text.insert(tk.END, log_message + "\n")
             self.log_text.see(tk.END)
@@ -529,30 +811,39 @@ class GoogleSheetsSyncApp:
                 newline_setting = config.get('newline_mode', 'windows' if self.is_windows else 'unix')
                 self.newline_var.set(newline_setting)
 
+                # Загружаем тему
+                theme = config.get('theme', 'light')
+                self.theme_var.set(theme)
+
                 sheets = config.get('sheets', [])
 
                 if selection_method == "by_name":
                     if len(sheets) > 0:
                         self.sheet1_name_var.set(sheets[0].get('name', ''))
                         self.sheet1_filename_var.set(sheets[0].get('output_filename', 'sheet1.tsv'))
+                        self.sheet1_check_interval_var.set(sheets[0].get('check_interval', 30))
+                        self.sheet1_save_enabled_var.set(sheets[0].get('save_enabled', True))
                     if len(sheets) > 1:
                         self.sheet2_name_var.set(sheets[1].get('name', ''))
                         self.sheet2_filename_var.set(sheets[1].get('output_filename', 'sheet2.tsv'))
+                        self.sheet2_check_interval_var.set(sheets[1].get('check_interval', 300))
+                        self.sheet2_save_enabled_var.set(sheets[1].get('save_enabled', True))
                 else:
                     if len(sheets) > 0:
                         self.sheet1_index_var.set(sheets[0].get('index', 0))
                         self.sheet1_filename_var.set(sheets[0].get('output_filename', 'sheet1.tsv'))
+                        self.sheet1_check_interval_var.set(sheets[0].get('check_interval', 30))
+                        self.sheet1_save_enabled_var.set(sheets[0].get('save_enabled', True))
                     if len(sheets) > 1:
                         self.sheet2_index_var.set(sheets[1].get('index', 1))
                         self.sheet2_filename_var.set(sheets[1].get('output_filename', 'sheet2.tsv'))
+                        self.sheet2_check_interval_var.set(sheets[1].get('check_interval', 300))
+                        self.sheet2_save_enabled_var.set(sheets[1].get('save_enabled', True))
 
                 folder_path = config.get('output_folder', '')
                 if not folder_path:
                     folder_path = self.get_default_save_folder()
                 self.folder_path_var.set(folder_path)
-
-                self.interval_var.set(config.get('update_interval_minutes', 5))
-                self.auto_monitor_var.set(config.get('auto_monitor_changes', True))
 
                 notifications = config.get('notifications', {})
                 self.notify_success_var.set(notifications.get('success', True))
@@ -580,22 +871,30 @@ class GoogleSheetsSyncApp:
                 sheets = [
                     {
                         'name': self.sheet1_name_var.get(),
-                        'output_filename': self.sheet1_filename_var.get()
+                        'output_filename': self.sheet1_filename_var.get(),
+                        'check_interval': self.sheet1_check_interval_var.get(),
+                        'save_enabled': self.sheet1_save_enabled_var.get()
                     },
                     {
                         'name': self.sheet2_name_var.get(),
-                        'output_filename': self.sheet2_filename_var.get()
+                        'output_filename': self.sheet2_filename_var.get(),
+                        'check_interval': self.sheet2_check_interval_var.get(),
+                        'save_enabled': self.sheet2_save_enabled_var.get()
                     }
                 ]
             else:
                 sheets = [
                     {
                         'index': self.sheet1_index_var.get(),
-                        'output_filename': self.sheet1_filename_var.get()
+                        'output_filename': self.sheet1_filename_var.get(),
+                        'check_interval': self.sheet1_check_interval_var.get(),
+                        'save_enabled': self.sheet1_save_enabled_var.get()
                     },
                     {
                         'index': self.sheet2_index_var.get(),
-                        'output_filename': self.sheet2_filename_var.get()
+                        'output_filename': self.sheet2_filename_var.get(),
+                        'check_interval': self.sheet2_check_interval_var.get(),
+                        'save_enabled': self.sheet2_save_enabled_var.get()
                     }
                 ]
 
@@ -605,10 +904,9 @@ class GoogleSheetsSyncApp:
                 'auto_filename': self.auto_filename.get(),
                 'encoding': self.encoding_var.get(),
                 'newline_mode': self.newline_var.get(),
+                'theme': self.theme_var.get(),
                 'sheets': sheets,
                 'output_folder': self.folder_path_var.get(),
-                'update_interval_minutes': self.interval_var.get(),
-                'auto_monitor_changes': self.auto_monitor_var.get(),
                 'notifications': {
                     'success': self.notify_success_var.get(),
                     'error': self.notify_error_var.get(),
@@ -676,15 +974,6 @@ class GoogleSheetsSyncApp:
             if self.notify_error_var.get():
                 messagebox.showerror("Ошибка", f"Ошибка авторизации: {str(e)}")
 
-    def get_sheet_name_by_index(self, index):
-        """Получение актуального имени листа по индексу"""
-        self.refresh_sheet_names()
-
-        if index in self.sheet_names_cache:
-            return self.sheet_names_cache[index]
-
-        return None
-
     def refresh_sheet_names(self):
         """Обновление списка имен листов"""
         if not self.sheets_service:
@@ -728,10 +1017,10 @@ class GoogleSheetsSyncApp:
             else:
                 index = self.sheet2_index_var.get()
 
-            sheet_name = self.get_sheet_name_by_index(index)
-            if sheet_name:
-                self.log(f"Лист {sheet_number} (индекс {index}): {sheet_name}")
-                return sheet_name
+            if index in self.sheet_names_cache:
+                return self.sheet_names_cache[index]
+            elif index < len(self.available_sheets):
+                return self.available_sheets[index]
             else:
                 return str(index)
 
@@ -766,15 +1055,17 @@ class GoogleSheetsSyncApp:
 
             output_folder = self.get_output_folder()
 
-            sheet1_identifier = self.get_sheet_identifier(1)
-            filename1 = self.sheet1_filename_var.get().strip()
-            if sheet1_identifier and filename1:
-                self.save_sheet_to_tsv(spreadsheet_id, sheet1_identifier, output_folder, filename1)
+            if self.sheet1_save_enabled_var.get():
+                sheet1_identifier = self.get_sheet_identifier(1)
+                filename1 = self.sheet1_filename_var.get().strip()
+                if sheet1_identifier and filename1:
+                    self.save_sheet_to_tsv(spreadsheet_id, sheet1_identifier, output_folder, filename1)
 
-            sheet2_identifier = self.get_sheet_identifier(2)
-            filename2 = self.sheet2_filename_var.get().strip()
-            if sheet2_identifier and filename2:
-                self.save_sheet_to_tsv(spreadsheet_id, sheet2_identifier, output_folder, filename2)
+            if self.sheet2_save_enabled_var.get():
+                sheet2_identifier = self.get_sheet_identifier(2)
+                filename2 = self.sheet2_filename_var.get().strip()
+                if sheet2_identifier and filename2:
+                    self.save_sheet_to_tsv(spreadsheet_id, sheet2_identifier, output_folder, filename2)
 
             self.log(f"Данные успешно сохранены в: {output_folder}")
 
@@ -788,7 +1079,7 @@ class GoogleSheetsSyncApp:
                 messagebox.showerror("Ошибка", f"Ошибка сохранения: {str(e)}")
 
     def save_sheet_to_tsv(self, spreadsheet_id, sheet_identifier, output_folder, filename):
-        """Сохранение листа в TSV с учетом настроек ОС"""
+        """Сохранение листа в TSV"""
         try:
             result = self.sheets_service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
@@ -819,57 +1110,20 @@ class GoogleSheetsSyncApp:
 
                     f.write('\t'.join(processed_row) + newline)
 
-            self.log(f"Сохранено: {filename} (лист: {sheet_identifier}, кодировка: {encoding})")
+            self.log(f"Сохранено: {filename} (лист: {sheet_identifier})")
 
         except Exception as e:
             raise Exception(f"Ошибка сохранения листа '{sheet_identifier}': {str(e)}")
-
-    def toggle_auto_save(self):
-        """Включение/выключение автосохранения"""
-        if not self.is_running:
-            if not self.sheets_service:
-                if self.notify_error_var.get():
-                    messagebox.showwarning("Предупреждение", "Сначала авторизуйтесь")
-                return
-
-            self.is_running = True
-            self.start_btn.config(text="Остановить авто-сохранение")
-            self.start_scheduler()
-
-            if self.auto_monitor_var.get():
-                self.start_monitoring()
-
-            self.log("Авто-сохранение запущено")
-
-        else:
-            self.is_running = False
-            self.start_btn.config(text="Запустить авто-сохранение")
-            self.stop_scheduler()
-            self.stop_monitoring()
-            self.log("Авто-сохранение остановлено")
-
-    def start_scheduler(self):
-        """Запуск планировщика"""
-        self.scheduler_thread = threading.Thread(target=self.scheduler_loop, daemon=True)
-        self.scheduler_thread.start()
-
-    def scheduler_loop(self):
-        """Цикл планировщика"""
-        interval = self.interval_var.get() * 60
-        while self.is_running:
-            time.sleep(interval)
-            if self.is_running:
-                self.root.after(0, lambda: self.save_now(is_auto_save=True))
-
-    def stop_scheduler(self):
-        """Остановка планировщика"""
-        if self.scheduler_thread:
-            self.scheduler_thread.join(timeout=1)
 
     def start_monitoring(self):
         """Запуск мониторинга изменений"""
         self.monitoring_thread = threading.Thread(target=self.monitor_loop, daemon=True)
         self.monitoring_thread.start()
+
+        self.last_check_time = {
+            1: time.time(),
+            2: time.time()
+        }
 
     def monitor_loop(self):
         """Цикл мониторинга изменений"""
@@ -878,41 +1132,66 @@ class GoogleSheetsSyncApp:
                 spreadsheet_id = self.spreadsheet_id_var.get().strip()
 
                 if spreadsheet_id:
-                    self.refresh_sheet_names()
+                    current_time = time.time()
 
-                    sheet1_identifier = self.get_sheet_identifier(1)
-                    sheet2_identifier = self.get_sheet_identifier(2)
+                    if (self.sheet1_save_enabled_var.get() and
+                            current_time - self.last_check_time.get(1, 0) >= self.sheet1_check_interval_var.get()):
+                        self.check_and_save_sheet(1)
+                        self.last_check_time[1] = current_time
 
-                    data_hash = ""
+                    if (self.sheet2_save_enabled_var.get() and
+                            current_time - self.last_check_time.get(2, 0) >= self.sheet2_check_interval_var.get()):
+                        self.check_and_save_sheet(2)
+                        self.last_check_time[2] = current_time
 
-                    for sheet_identifier in [sheet1_identifier, sheet2_identifier]:
-                        if sheet_identifier:
-                            try:
-                                result = self.sheets_service.spreadsheets().values().get(
-                                    spreadsheetId=spreadsheet_id,
-                                    range=sheet_identifier
-                                ).execute()
-                                data_hash += str(result)
-                            except:
-                                pass
-
-                    current_hash = hash(data_hash)
-
-                    if self.last_data_hash is not None and self.last_data_hash != current_hash:
-                        self.log("Обнаружены изменения в таблице")
-
-                        if self.notify_changes_var.get():
-                            self.root.after(0, lambda: messagebox.showinfo("Изменения",
-                                                                           "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
-
-                        self.root.after(0, lambda: self.save_now(is_auto_save=True))
-
-                    self.last_data_hash = current_hash
-
-                time.sleep(90)
+                time.sleep(5)
 
             except Exception as e:
-                time.sleep(180)
+                self.log(f"Ошибка в цикле мониторинга: {str(e)}")
+                time.sleep(10)
+
+    def check_and_save_sheet(self, sheet_number):
+        """Проверка и сохранение конкретного листа"""
+        try:
+            spreadsheet_id = self.spreadsheet_id_var.get().strip()
+
+            if not spreadsheet_id:
+                return
+
+            self.refresh_sheet_names()
+
+            sheet_identifier = self.get_sheet_identifier(sheet_number)
+
+            if not sheet_identifier:
+                return
+
+            result = self.sheets_service.spreadsheets().values().get(
+                spreadsheetId=spreadsheet_id,
+                range=sheet_identifier
+            ).execute()
+
+            current_hash = hash(str(result))
+
+            if sheet_number not in self.last_data_hash or self.last_data_hash[sheet_number] != current_hash:
+                self.log(f"Обнаружены изменения в листе {sheet_number}")
+
+                if self.notify_changes_var.get():
+                    self.root.after(0, lambda: messagebox.showinfo("Изменения",
+                                                                   "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
+
+                if sheet_number == 1:
+                    filename = self.sheet1_filename_var.get().strip()
+                else:
+                    filename = self.sheet2_filename_var.get().strip()
+
+                if filename:
+                    output_folder = self.get_output_folder()
+                    self.save_sheet_to_tsv(spreadsheet_id, sheet_identifier, output_folder, filename)
+
+                self.last_data_hash[sheet_number] = current_hash
+
+        except Exception as e:
+            self.log(f"Ошибка проверки листа {sheet_number}: {str(e)}")
 
     def stop_monitoring(self):
         """Остановка мониторинга"""
@@ -928,8 +1207,11 @@ class GoogleSheetsSyncApp:
         """Обработка закрытия приложения"""
         self.save_config()
         self.is_running = False
-        self.stop_scheduler()
         self.stop_monitoring()
+
+        if self.tray_icon:
+            self.tray_icon.stop()
+
         self.root.destroy()
 
 
