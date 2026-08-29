@@ -909,10 +909,10 @@ class GoogleSheetsSyncApp:
 
                     self.last_data_hash = current_hash
 
-                time.sleep(60)
+                time.sleep(90)
 
             except Exception as e:
-                time.sleep(120)
+                time.sleep(180)
 
     def stop_monitoring(self):
         """Остановка мониторинга"""
