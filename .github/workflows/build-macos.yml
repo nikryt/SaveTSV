@@ -1,4 +1,4 @@
-name: Build macOS App Multi-Arch
+name: Build macOS App Apple Silicon
 
 on:
   push:
@@ -6,18 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    runs-on: macos-13  # Используем Intel Mac для x86_64
-    strategy:
-      matrix:
-        include:
-          - arch: x86_64
-            runner: macos-13
-            python-version: '3.11'
-          - arch: arm64
-            runner: macos-latest
-            python-version: '3.11'
-      fail-fast: false
+  build-macos-arm:
+    runs-on: macos-latest  # Apple Silicon runner
 
     steps:
     - name: Checkout code
@@ -26,16 +16,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'  # Используем более новую версию
-        architecture: ${{ matrix.arch }}
-
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/Library/Caches/pip
-        key: ${{ runner.os }}-${{ matrix.arch }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ matrix.arch }}-pip-
+        python-version: '3.11'
 
     - name: Install dependencies
       run: |
@@ -43,12 +24,12 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
-    - name: Build with PyInstaller
+    - name: Build for Apple Silicon
       run: |
         pyinstaller --onefile \
           --windowed \
-          --name "GoogleSheetsSync-${{ matrix.arch }}" \
-          --target-arch ${{ matrix.arch }} \
+          --name "GoogleSheetsSync-ARM" \
+          --target-arch arm64 \
           --hidden-import=googleapiclient.discovery \
           --hidden-import=google_auth_oauthlib \
           --hidden-import=google.auth.transport.requests \
@@ -60,6 +41,6 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: GoogleSheetsSync-${{ matrix.arch }}
-        path: dist/GoogleSheetsSync-${{ matrix.arch }}
+        name: GoogleSheetsSync-ARM
+        path: dist/GoogleSheetsSync-ARM
         retention-days: 30
