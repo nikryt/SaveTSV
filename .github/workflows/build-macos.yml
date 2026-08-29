@@ -1,4 +1,4 @@
-name: Build macOS App (Simple)
+name: Build macOS App with DMG
 
 on:
   push:
@@ -29,25 +29,112 @@ jobs:
         pyinstaller \
           --windowed \
           --name "GoogleSheetsSync" \
+          --osx-bundle-identifier "com.googlesheets.sync" \
           --hidden-import=googleapiclient.discovery \
           --hidden-import=google_auth_oauthlib \
           --collect-all googleapiclient \
           --collect-all google_auth_oauthlib \
           main.py
 
-    - name: Create ZIP
+    - name: Create custom DMG with AppleScript
       run: |
-        cd dist
-        zip -r ../GoogleSheetsSync-macOS.zip GoogleSheetsSync.app
-        cd ..
+        # Создаем папку для DMG
+        mkdir -p dmg_staging
+        cp -r dist/GoogleSheetsSync.app dmg_staging/
+        ln -s /Applications dmg_staging/Applications
+        
+        # Создаем DMG
+        hdiutil create \
+          -volname "Google Sheets Sync" \
+          -srcfolder dmg_staging \
+          -ov \
+          -format UDZO \
+          -fs HFS+ \
+          "GoogleSheetsSync.dmg"
+        
+        # Монтируем DMG для настройки
+        hdiutil attach GoogleSheetsSync.dmg
+        
+        # Настройка вида папки (опционально)
+        osascript <<'EOF'
+        tell application "Finder"
+          tell disk "Google Sheets Sync"
+            open
+            set current view of container window to icon view
+            set toolbar visible of container window to false
+            set statusbar visible of container window to false
+            set the bounds of container window to {400, 100, 1000, 500}
+            set theViewOptions to the icon view options of container window
+            set arrangement of theViewOptions to not arranged
+            set icon size of theViewOptions to 128
+            set position of item "GoogleSheetsSync.app" of container window to {200, 200}
+            set position of item "Applications" of container window to {500, 200}
+            update without registering applications
+            close
+          end tell
+        end tell
+        EOF
+        
+        # Отмонтируем DMG
+        hdiutil detach /Volumes/Google\ Sheets\ Sync
 
-    - name: Upload ZIP
+    - name: Upload DMG
       uses: actions/upload-artifact@v4
       with:
-        name: GoogleSheetsSync-macOS
-        path: GoogleSheetsSync-macOS.zip
+        name: GoogleSheetsSync-DMG
+        path: GoogleSheetsSync.dmg
         retention-days: 30
 
+#name: Build macOS App (Simple)
+#
+#on:
+#  push:
+#    branches: [ main ]
+#  workflow_dispatch:
+#
+#jobs:
+#  build:
+#    runs-on: macos-latest
+#
+#    steps:
+#    - name: Checkout code
+#      uses: actions/checkout@v4
+#
+#    - name: Set up Python
+#      uses: actions/setup-python@v5
+#      with:
+#        python-version: '3.11'
+#
+#    - name: Install dependencies
+#      run: |
+#        python -m pip install --upgrade pip
+#        pip install -r requirements.txt
+#        pip install pyinstaller
+#
+#    - name: Build .app bundle
+#      run: |
+#        pyinstaller \
+#          --windowed \
+#          --name "GoogleSheetsSync" \
+#          --hidden-import=googleapiclient.discovery \
+#          --hidden-import=google_auth_oauthlib \
+#          --collect-all googleapiclient \
+#          --collect-all google_auth_oauthlib \
+#          main.py
+#
+#    - name: Create ZIP
+#      run: |
+#        cd dist
+#        zip -r ../GoogleSheetsSync-macOS.zip GoogleSheetsSync.app
+#        cd ..
+#
+#    - name: Upload ZIP
+#      uses: actions/upload-artifact@v4
+#      with:
+#        name: GoogleSheetsSync-macOS
+#        path: GoogleSheetsSync-macOS.zip
+#        retention-days: 30
+#
 
 #name: Build macOS App Apple Silicon
 #
