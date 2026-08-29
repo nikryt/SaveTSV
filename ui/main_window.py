@@ -12,11 +12,94 @@ class MainWindow:
         self.create_widgets()
 
     def create_widgets(self):
-        """Создание виджетов главного окна"""
-        # Main frame
-        self.main_frame = ttk.Frame(self.root, padding="10")
-        self.main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        """Создание виджетов главного окна с прокруткой"""
 
+        # Создаем Canvas для прокрутки
+        self.canvas = tk.Canvas(self.root, highlightthickness=0)
+        self.canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # Создаем вертикальный скроллбар
+        self.v_scrollbar = ttk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+
+        # Создаем горизонтальный скроллбар (если нужен)
+        self.h_scrollbar = ttk.Scrollbar(self.root, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        self.h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+
+        # Настраиваем Canvas
+        self.canvas.configure(yscrollcommand=self.v_scrollbar.set, xscrollcommand=self.h_scrollbar.set)
+
+        # Создаем фрейм внутри Canvas
+        self.main_frame = ttk.Frame(self.canvas, padding="10")
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.main_frame, anchor=tk.NW)
+
+        # Привязываем события для обновления области прокрутки
+        self.main_frame.bind("<Configure>", self.on_frame_configure)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
+
+        # Настраиваем прокрутку колесиком мыши
+        self.setup_mousewheel()
+
+        # Создаем содержимое
+        self.create_content()
+
+    def on_frame_configure(self, event=None):
+        """Обновление области прокрутки при изменении размера фрейма"""
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def on_canvas_configure(self, event):
+        """Обновление ширины фрейма при изменении размера Canvas"""
+        # Устанавливаем ширину фрейма равной ширине Canvas
+        self.canvas.itemconfig(self.canvas_window, width=event.width)
+
+    def setup_mousewheel(self):
+        """Настройка прокрутки колесиком мыши"""
+
+        def on_mousewheel(event):
+            # Для Windows и Linux
+            if event.num == 4 or event.delta > 0:
+                self.canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or event.delta < 0:
+                self.canvas.yview_scroll(1, "units")
+
+        def on_mousewheel_windows(event):
+            # Для Windows
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def on_mousewheel_mac(event):
+            # Для macOS
+            self.canvas.yview_scroll(int(-1 * event.delta), "units")
+
+        # Привязываем события для разных ОС
+        self.canvas.bind("<MouseWheel>", on_mousewheel_windows)  # Windows
+        self.canvas.bind("<Button-4>", on_mousewheel)  # Linux scroll up
+        self.canvas.bind("<Button-5>", on_mousewheel)  # Linux scroll down
+        self.canvas.bind("<MouseWheel>", on_mousewheel_mac)  # macOS
+
+        # Привязываем к главному окну
+        self.root.bind("<MouseWheel>", self.on_root_mousewheel)
+
+    def on_root_mousewheel(self, event):
+        """Обработка прокрутки на уровне окна"""
+        # Проверяем, находится ли курсор над Canvas
+        widget_under_mouse = self.root.winfo_containing(event.x_root, event.y_root)
+
+        if widget_under_mouse and self.is_descendant(widget_under_mouse, self.canvas):
+            if event.delta > 0:
+                self.canvas.yview_scroll(-1, "units")
+            else:
+                self.canvas.yview_scroll(1, "units")
+
+    def is_descendant(self, widget, ancestor):
+        """Проверка, является ли widget потомком ancestor"""
+        while widget is not None:
+            if widget == ancestor:
+                return True
+            widget = widget.master
+        return False
+
+    def create_content(self):
+        """Создание содержимого окна"""
         # Верхняя панель
         self.create_top_panel()
 
@@ -177,3 +260,11 @@ class MainWindow:
         ttk.Label(self.main_frame, text="Журнал:").grid(row=8, column=0, sticky=tk.W)
         self.log_text = scrolledtext.ScrolledText(self.main_frame, height=12, width=90)
         self.log_text.grid(row=9, column=0, pady=5)
+
+    def scroll_to_top(self):
+        """Прокрутка к началу"""
+        self.canvas.yview_moveto(0)
+
+    def scroll_to_bottom(self):
+        """Прокрутка к концу"""
+        self.canvas.yview_moveto(1)

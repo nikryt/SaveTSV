@@ -22,7 +22,11 @@ class GoogleSheetsSyncApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Google Sheets Sync")
-        self.root.geometry("860x1120")
+        self.root.geometry("860x800")  # Уменьшаем высоту, так как теперь есть прокрутка
+
+        # Настройка сетки для root
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
 
         # Инициализация менеджеров
         self.file_manager = FileManager()
@@ -44,7 +48,7 @@ class GoogleSheetsSyncApp:
         # Данные для мониторинга
         self.last_data_hash = {}
         self.last_check_time = {}
-        self.last_data_content = {}  # Хранение последних данных для сравнения
+        self.last_data_content = {}
 
         # Инициализация UI
         self.ui = MainWindow(self.root, self)
@@ -76,6 +80,10 @@ class GoogleSheetsSyncApp:
 
         # Привязываем события для обновления имен файлов
         self.bind_sheet_events()
+
+        # После настройки горячих клавиш
+        self.setup_scroll_keys()
+
 
     def bind_sheet_events(self):
         """Привязка событий для обновления имен файлов"""
@@ -281,7 +289,7 @@ class GoogleSheetsSyncApp:
         """Сохранение листов
 
         Args:
-            sheet_number: Номер листа для сохранения (1 или 2).
+            sheet_number: Номер листа для сохранения (1 или 2). 
                          Если None, сохраняются оба листа.
         """
         if not self.sheets_manager or not self.sheets_manager.service:
@@ -290,11 +298,14 @@ class GoogleSheetsSyncApp:
 
         if sheet_number is not None:
             # Сохраняем только указанный лист
-            self.save_single_sheet(sheet_number)
+            if self.save_single_sheet(sheet_number):
+                # Обновляем хэш после сохранения
+                self.update_hash_after_manual_save(sheet_number)
         else:
             # Сохраняем оба листа
             for sheet_num in [1, 2]:
-                self.save_single_sheet(sheet_num)
+                if self.save_single_sheet(sheet_num):
+                    self.update_hash_after_manual_save(sheet_num)
 
         # Показываем уведомление о завершении
         output_folder = self.ui.folder_path_var.get().strip() or self.file_manager.get_default_save_folder()
@@ -415,7 +426,8 @@ class GoogleSheetsSyncApp:
                         # Обновляем время последней проверки
                         self.last_check_time[sheet_num] = current_time
 
-                time.sleep(5)  # Пауза между циклами
+                # Небольшая пауза
+                time.sleep(5)
 
             except Exception as e:
                 self.logger.log(f"Ошибка в цикле мониторинга: {str(e)}")
@@ -429,7 +441,6 @@ class GoogleSheetsSyncApp:
             if not spreadsheet_id:
                 return
 
-            # Получаем идентификатор листа
             sheet_identifier = self.get_current_sheet_name(sheet_number)
 
             if not sheet_identifier:
@@ -444,36 +455,37 @@ class GoogleSheetsSyncApp:
             # Создаем детальный отпечаток данных
             data_fingerprint = self.create_data_fingerprint(data)
 
-            # Проверяем, были ли изменения
-            if sheet_number in self.last_data_hash:
-                if self.last_data_hash[sheet_number] == data_fingerprint:
-                    # Данные не изменились
-                    return
-                else:
-                    # Данные изменились
-                    self.logger.log(f"Обнаружены изменения в листе {sheet_number} ({sheet_identifier})")
-
-                    # Показываем уведомление об изменениях
-                    if self.ui.notify_changes_var.get():
-                        self.root.after(0, lambda: messagebox.showinfo("Изменения",
-                                                                       "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
-            else:
-                # Первая проверка, просто сохраняем хэш
+            # Проверяем, есть ли сохраненный хэш
+            if sheet_number not in self.last_data_hash:
+                # Первая проверка - инициализируем хэш
                 self.last_data_hash[sheet_number] = data_fingerprint
                 self.last_data_content[sheet_number] = data
+                self.logger.log(f"Инициализация мониторинга для листа {sheet_number}")
                 return
 
-            # Сохраняем ТОЛЬКО измененный лист
-            if self.save_single_sheet(sheet_number):
-                # Обновляем хэш после успешного сохранения
+            # Сравниваем хэши
+            if self.last_data_hash[sheet_number] == data_fingerprint:
+                # Данные не изменились
+                return
+
+            # Данные изменились
+            self.logger.log(f"Обнаружены изменения в листе {sheet_number} ({sheet_identifier})")
+
+            # Показываем уведомление
+            if self.ui.notify_changes_var.get():
+                self.root.after(0, lambda: messagebox.showinfo("Изменения",
+                                                               "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
+
+            # Сохраняем измененный лист
+            save_success = self.save_single_sheet(sheet_number)
+
+            # ВАЖНО: Обновляем хэш сразу после сохранения
+            if save_success:
                 self.last_data_hash[sheet_number] = data_fingerprint
                 self.last_data_content[sheet_number] = data
-
-                # Показываем уведомление об успешном сохранении
-                if self.ui.notify_autosave_var.get() and self.ui.notify_success_var.get():
-                    filename = self.ui.sheet1_settings.filename_var.get() if sheet_number == 1 else self.ui.sheet2_settings.filename_var.get()
-                    self.root.after(0, lambda: messagebox.showinfo("Сохранено",
-                                                                   f"Файл {filename} успешно сохранен"))
+                self.logger.log(f"Хэш обновлен для листа {sheet_number}")
+            else:
+                self.logger.log(f"Ошибка сохранения листа {sheet_number}, хэш не обновлен")
 
         except Exception as e:
             self.logger.log(f"Ошибка проверки листа {sheet_number}: {str(e)}")
@@ -630,3 +642,51 @@ class GoogleSheetsSyncApp:
         self.stop_monitoring()
         self.tray_manager.stop()
         self.root.destroy()
+
+    def update_hash_after_manual_save(self, sheet_num):
+        pass
+
+    def setup_scroll_keys(self):
+        """Настройка клавиш для прокрутки"""
+        # Page Up / Page Down
+        self.root.bind('<Prior>', lambda e: self.ui.canvas.yview_scroll(-1, 'pages'))
+        self.root.bind('<Next>', lambda e: self.ui.canvas.yview_scroll(1, 'pages'))
+
+        # Home / End
+        self.root.bind('<Home>', lambda e: self.ui.scroll_to_top())
+        self.root.bind('<End>', lambda e: self.ui.scroll_to_bottom())
+
+        # Стрелки вверх/вниз
+        self.root.bind('<Up>', lambda e: self.ui.canvas.yview_scroll(-1, 'units'))
+        self.root.bind('<Down>', lambda e: self.ui.canvas.yview_scroll(1, 'units'))
+
+
+
+def update_hash_after_manual_save(self, sheet_number=None):
+    """Обновление хэша после ручного сохранения"""
+    try:
+        spreadsheet_id = self.ui.spreadsheet_id_var.get().strip()
+
+        if not spreadsheet_id:
+            return
+
+        sheets_to_update = [1, 2] if sheet_number is None else [sheet_number]
+
+        for sheet_num in sheets_to_update:
+            sheet_identifier = self.get_current_sheet_name(sheet_num)
+
+            if not sheet_identifier:
+                continue
+
+            # Получаем данные
+            data = self.sheets_manager.get_sheet_data(spreadsheet_id, sheet_identifier)
+
+            if data:
+                # Обновляем хэш
+                data_fingerprint = self.create_data_fingerprint(data)
+                self.last_data_hash[sheet_num] = data_fingerprint
+                self.last_data_content[sheet_num] = data
+                self.logger.log(f"Хэш обновлен для листа {sheet_num} после ручного сохранения")
+
+    except Exception as e:
+        self.logger.log(f"Ошибка обновления хэша: {str(e)}")

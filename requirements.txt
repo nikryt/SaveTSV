@@ -1,6 +1,12 @@
+# Основные зависимости
 google-auth>=2.23.0
 google-auth-oauthlib>=1.0.0
 google-auth-httplib2>=0.1.1
 google-api-python-client>=2.86.0
+
+# Для системного трея
 pystray>=0.19.4
 Pillow>=10.0.0
+
+# Для сборки
+pyinstaller>=6.0.0
