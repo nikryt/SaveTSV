@@ -1,4 +1,4 @@
-name: Build macOS App Apple Silicon
+name: Build macOS App with Beautiful DMG
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-macos-arm:
-    runs-on: macos-latest  # Apple Silicon runner
+  build:
+    runs-on: macos-latest
 
     steps:
     - name: Checkout code
@@ -24,23 +24,87 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
-    - name: Build for Apple Silicon
+    - name: Install create-dmg
       run: |
-        pyinstaller --onefile \
+        brew install create-dmg
+
+    - name: Build .app bundle
+      run: |
+        pyinstaller \
           --windowed \
-          --name "GoogleSheetsSync-ARM" \
-          --target-arch arm64 \
+          --name "GoogleSheetsSync" \
+          --osx-bundle-identifier "com.googlesheets.sync" \
           --hidden-import=googleapiclient.discovery \
           --hidden-import=google_auth_oauthlib \
-          --hidden-import=google.auth.transport.requests \
-          --hidden-import=google.oauth2.credentials \
           --collect-all googleapiclient \
           --collect-all google_auth_oauthlib \
           main.py
 
-    - name: Upload artifact
+    - name: Create beautiful DMG
+      run: |
+        create-dmg \
+          --volname "Google Sheets Sync" \
+          --volicon "icon.icns" \
+          --window-pos 200 120 \
+          --window-size 800 400 \
+          --icon-size 100 \
+          --icon "GoogleSheetsSync.app" 200 190 \
+          --hide-extension "GoogleSheetsSync.app" \
+          --app-drop-link 600 185 \
+          "GoogleSheetsSync.dmg" \
+          "dist/"
+
+    - name: Upload DMG
       uses: actions/upload-artifact@v4
       with:
-        name: GoogleSheetsSync-ARM
-        path: dist/GoogleSheetsSync-ARM
+        name: GoogleSheetsSync-DMG
+        path: GoogleSheetsSync.dmg
         retention-days: 30
+
+
+#name: Build macOS App Apple Silicon
+#
+#on:
+#  push:
+#    branches: [ main ]
+#  workflow_dispatch:
+#
+#jobs:
+#  build-macos-arm:
+#    runs-on: macos-latest  # Apple Silicon runner
+#
+#    steps:
+#    - name: Checkout code
+#      uses: actions/checkout@v4
+#
+#    - name: Set up Python
+#      uses: actions/setup-python@v5
+#      with:
+#        python-version: '3.11'
+#
+#    - name: Install dependencies
+#      run: |
+#        python -m pip install --upgrade pip
+#        pip install -r requirements.txt
+#        pip install pyinstaller
+#
+#    - name: Build for Apple Silicon
+#      run: |
+#        pyinstaller --onefile \
+#          --windowed \
+#          --name "GoogleSheetsSync-ARM" \
+#          --target-arch arm64 \
+#          --hidden-import=googleapiclient.discovery \
+#          --hidden-import=google_auth_oauthlib \
+#          --hidden-import=google.auth.transport.requests \
+#          --hidden-import=google.oauth2.credentials \
+#          --collect-all googleapiclient \
+#          --collect-all google_auth_oauthlib \
+#          main.py
+#
+#    - name: Upload artifact
+#      uses: actions/upload-artifact@v4
+#      with:
+#        name: GoogleSheetsSync-ARM
+#        path: dist/GoogleSheetsSync-ARM
+#        retention-days: 30
