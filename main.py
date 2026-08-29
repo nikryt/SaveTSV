@@ -903,16 +903,16 @@ class GoogleSheetsSyncApp:
 
                         if self.notify_changes_var.get():
                             self.root.after(0, lambda: messagebox.showinfo("Изменения",
-                                                                           "Обнаружены изменения в таблице. Выполняется сохранение..."))
+                                                                           "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
 
                         self.root.after(0, lambda: self.save_now(is_auto_save=True))
 
                     self.last_data_hash = current_hash
 
-                time.sleep(30)
+                time.sleep(60)
 
             except Exception as e:
-                time.sleep(60)
+                time.sleep(120)
 
     def stop_monitoring(self):
         """Остановка мониторинга"""
