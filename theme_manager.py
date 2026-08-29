@@ -22,7 +22,8 @@ class ThemeManager:
                 'label_bg': '#2b2b2b',
                 'label_fg': '#ffffff',
                 'log_bg': '#1e1e1e',
-                'log_fg': '#ffffff'
+                'log_fg': '#ffffff',
+                'canvas_bg': '#2b2b2b'
             }
         else:
             return {
@@ -36,10 +37,11 @@ class ThemeManager:
                 'label_bg': '#f0f0f0',
                 'label_fg': '#000000',
                 'log_bg': '#ffffff',
-                'log_fg': '#000000'
+                'log_fg': '#000000',
+                'canvas_bg': '#f0f0f0'
             }
 
-    def apply_theme(self, log_text_widget=None):
+    def apply_theme(self, log_text_widget=None, canvas_widget=None):
         """Применение темы к приложению"""
         colors = self.get_theme_colors()
 
@@ -70,6 +72,10 @@ class ThemeManager:
         # Настройка основного окна
         self.root.configure(bg=colors['bg'])
 
+        # Настройка Canvas
+        if canvas_widget:
+            canvas_widget.configure(bg=colors['canvas_bg'])
+
         # Настройка журнала
         if log_text_widget:
             log_text_widget.configure(
@@ -81,11 +87,11 @@ class ThemeManager:
         self.current_theme = self.theme_var.get()
         return colors
 
-    def toggle_theme(self, log_text_widget=None):
+    def toggle_theme(self, log_text_widget=None, canvas_widget=None):
         """Переключение темы"""
         if self.theme_var.get() == "light":
             self.theme_var.set("dark")
         else:
             self.theme_var.set("light")
 
-        return self.apply_theme(log_text_widget)
+        return self.apply_theme(log_text_widget, canvas_widget)

@@ -10,21 +10,32 @@ class MainWindow:
         self.context_menu = app.context_menu_manager
 
         self.create_widgets()
+        self.setup_mousewheel()
+        self.create_content()
+
+        # После создания содержимого, обновляем скроллбары
+        self.root.after(100, self.update_scrollbars)
 
     def create_widgets(self):
-        """Создание виджетов главного окна с прокруткой"""
+        """Создание виджетов главного окна с умной прокруткой"""
 
-        # Создаем Canvas для прокрутки
-        self.canvas = tk.Canvas(self.root, highlightthickness=0)
+        # Настраиваем сетку root
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
+
+        # Создаем контейнер для Canvas и скроллбаров
+        self.container = ttk.Frame(self.root)
+        self.container.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.container.grid_rowconfigure(0, weight=1)
+        self.container.grid_columnconfigure(0, weight=1)
+
+        # Создаем Canvas с фоном, который будет меняться с темой
+        self.canvas = tk.Canvas(self.container, highlightthickness=0, bg='#f0f0f0')
         self.canvas.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
-        # Создаем вертикальный скроллбар
-        self.v_scrollbar = ttk.Scrollbar(self.root, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
-
-        # Создаем горизонтальный скроллбар
-        self.h_scrollbar = ttk.Scrollbar(self.root, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        self.h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+        # Создаем скроллбары (изначально скрыты)
+        self.v_scrollbar = ttk.Scrollbar(self.container, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.h_scrollbar = ttk.Scrollbar(self.container, orient=tk.HORIZONTAL, command=self.canvas.xview)
 
         # Настраиваем Canvas
         self.canvas.configure(yscrollcommand=self.v_scrollbar.set, xscrollcommand=self.h_scrollbar.set)
@@ -33,49 +44,92 @@ class MainWindow:
         self.main_frame = ttk.Frame(self.canvas, padding="10")
         self.canvas_window = self.canvas.create_window((0, 0), window=self.main_frame, anchor=tk.NW)
 
-        # Привязываем события для обновления области прокрутки
+        # Привязываем события
         self.main_frame.bind("<Configure>", self.on_frame_configure)
         self.canvas.bind("<Configure>", self.on_canvas_configure)
-
-        # Настраиваем прокрутку колесиком мыши
-        self.setup_mousewheel()
-
-        # Создаем содержимое в правильном порядке
-        self.create_content()
 
     def on_frame_configure(self, event=None):
         """Обновление области прокрутки при изменении размера фрейма"""
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self.update_scrollbars()
 
     def on_canvas_configure(self, event):
         """Обновление ширины фрейма при изменении размера Canvas"""
+        # Устанавливаем ширину фрейма равной ширине Canvas
         self.canvas.itemconfig(self.canvas_window, width=event.width)
+        self.update_scrollbars()
+
+    def update_scrollbars(self):
+        """Умное отображение скроллбаров"""
+        try:
+            # Получаем размеры
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+
+            # Получаем область прокрутки
+            scroll_region = self.canvas.bbox("all")
+            if scroll_region:
+                content_width = scroll_region[2] - scroll_region[0]
+                content_height = scroll_region[3] - scroll_region[1]
+
+                # Проверяем, нужна ли вертикальная прокрутка
+                if content_height > canvas_height:
+                    if not self.v_scrollbar.winfo_ismapped():
+                        self.v_scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+                else:
+                    if self.v_scrollbar.winfo_ismapped():
+                        self.v_scrollbar.grid_forget()
+
+                # Проверяем, нужна ли горизонтальная прокрутка
+                # Учитываем, что контент может быть шире canvas
+                if content_width > canvas_width + 5:  # Добавляем небольшой запас
+                    if not self.h_scrollbar.winfo_ismapped():
+                        self.h_scrollbar.grid(row=1, column=0, sticky=(tk.W, tk.E))
+                else:
+                    if self.h_scrollbar.winfo_ismapped():
+                        self.h_scrollbar.grid_forget()
+            else:
+                # Если нет содержимого, скрываем оба скроллбара
+                if self.v_scrollbar.winfo_ismapped():
+                    self.v_scrollbar.grid_forget()
+                if self.h_scrollbar.winfo_ismapped():
+                    self.h_scrollbar.grid_forget()
+        except Exception as e:
+            print(f"Error updating scrollbars: {e}")
 
     def setup_mousewheel(self):
         """Настройка прокрутки колесиком мыши"""
 
         def on_mousewheel_windows(event):
-            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            if self.v_scrollbar.winfo_ismapped():
+                self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         def on_mousewheel_linux(event):
-            if event.num == 4:
-                self.canvas.yview_scroll(-1, "units")
-            elif event.num == 5:
-                self.canvas.yview_scroll(1, "units")
+            if self.v_scrollbar.winfo_ismapped():
+                if event.num == 4:
+                    self.canvas.yview_scroll(-1, "units")
+                elif event.num == 5:
+                    self.canvas.yview_scroll(1, "units")
 
-        def on_mousewheel_mac(event):
-            self.canvas.yview_scroll(int(-1 * event.delta), "units")
+        def on_shift_mousewheel(event):
+            """Горизонтальная прокрутка при зажатом Shift"""
+            if self.h_scrollbar.winfo_ismapped():
+                self.canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
-        # Привязываем события для разных ОС
+        # Привязываем события
         self.canvas.bind("<MouseWheel>", on_mousewheel_windows)
         self.canvas.bind("<Button-4>", on_mousewheel_linux)
         self.canvas.bind("<Button-5>", on_mousewheel_linux)
+        self.canvas.bind("<Shift-MouseWheel>", on_shift_mousewheel)
 
         # Привязываем к главному окну
         self.root.bind("<MouseWheel>", self.on_root_mousewheel)
 
     def on_root_mousewheel(self, event):
         """Обработка прокрутки на уровне окна"""
+        if not self.v_scrollbar.winfo_ismapped():
+            return
+
         widget_under_mouse = self.root.winfo_containing(event.x_root, event.y_root)
 
         if widget_under_mouse and self.is_descendant(widget_under_mouse, self.canvas):
@@ -92,6 +146,10 @@ class MainWindow:
             widget = widget.master
         return False
 
+    def update_canvas_bg(self, color):
+        """Обновление фона Canvas"""
+        self.canvas.configure(bg=color)
+
     def create_content(self):
         """Создание содержимого окна в правильном порядке"""
 
@@ -101,10 +159,10 @@ class MainWindow:
         # 2. Настройки подключения
         self.create_connection_settings()
 
-        # 3. Кнопка авторизации
+        # 3. Кнопка авторизации (по центру)
         self.create_auth_button()
 
-        # 4. Статус
+        # 4. Статус (по центру)
         self.create_status()
 
         # 5. Настройки сохранения
@@ -194,28 +252,33 @@ class MainWindow:
                         value="unix").pack(side=tk.LEFT, padx=5)
 
     def create_auth_button(self):
-        """Создание кнопки авторизации"""
+        """Создание кнопки авторизации по центру"""
         auth_frame = ttk.Frame(self.main_frame)
         auth_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=10)
 
-        self.auth_btn = ttk.Button(auth_frame, text="1. Авторизоваться",
+        # Создаем внутренний фрейм для центрирования
+        center_frame = ttk.Frame(auth_frame)
+        center_frame.pack(expand=True)
+
+        self.auth_btn = ttk.Button(center_frame, text="1. Авторизоваться",
                                    command=self.app.authenticate_google,
                                    width=20)
         self.auth_btn.pack(side=tk.LEFT, padx=5)
 
-        # Кнопка получения листов (дополнительная)
-        ttk.Button(auth_frame, text="Получить листы",
+        # Кнопка получения листов
+        ttk.Button(center_frame, text="Получить листы",
                    command=self.app.get_sheet_list).pack(side=tk.LEFT, padx=5)
 
     def create_status(self):
-        """Создание статуса"""
+        """Создание статуса по центру"""
         status_frame = ttk.Frame(self.main_frame)
         status_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=5)
 
         self.status_var = tk.StringVar(value="Статус: Не авторизован")
-        status_label = ttk.Label(status_frame, textvariable=self.status_var,
-                                 foreground="red", font=("Arial", 10, "bold"))
-        status_label.pack(side=tk.LEFT, padx=5)
+        self.status_label = ttk.Label(status_frame, textvariable=self.status_var,
+                                      foreground="#ff8800",  # Оранжевый для "Не авторизован"
+                                      font=("Arial", 10, "bold"))
+        self.status_label.pack(expand=True)
 
     def create_output_settings(self):
         """Создание настроек сохранения"""
@@ -243,7 +306,6 @@ class MainWindow:
         notification_frame = ttk.LabelFrame(self.main_frame, text="Настройки уведомлений", padding="10")
         notification_frame.grid(row=8, column=0, sticky=(tk.W, tk.E), pady=5)
 
-        # Создаем сетку для уведомлений
         self.notify_success_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(notification_frame, text="Уведомлять об успешном сохранении",
                         variable=self.notify_success_var).grid(row=0, column=0, sticky=tk.W, pady=2)

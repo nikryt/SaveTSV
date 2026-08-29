@@ -22,9 +22,11 @@ class GoogleSheetsSyncApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Google Sheets Sync")
-        self.root.geometry("860x800")  # Уменьшаем высоту, так как теперь есть прокрутка
 
-        # Настройка сетки для root
+        # Определяем размер экрана и устанавливаем размер окна
+        self.setup_window_size()
+
+        # Настройка сетки root
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
 
@@ -52,6 +54,9 @@ class GoogleSheetsSyncApp:
 
         # Инициализация UI
         self.ui = MainWindow(self.root, self)
+
+        # Устанавливаем начальный статус (только один раз)
+        self.set_status("Статус: Не авторизован", 'orange')
 
         # Подключаем логгер
         self.logger.set_log_widget(self.ui.log_text)
@@ -81,9 +86,43 @@ class GoogleSheetsSyncApp:
         # Привязываем события для обновления имен файлов
         self.bind_sheet_events()
 
-        # После настройки горячих клавиш
+        # Настройка клавиш прокрутки
         self.setup_scroll_keys()
 
+        # Обновляем скроллбары после полной инициализации
+        self.root.after(200, self.ui.update_scrollbars)
+
+    def setup_window_size(self):
+        """Настройка размера окна"""
+        # Получаем размеры экрана
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        # Определяем оптимальные размеры окна
+        window_width = min(860, screen_width - 100)
+
+        # Для высоты используем максимально доступную высоту
+        window_height = screen_height - 100
+
+        # Центрируем окно
+        x = (screen_width - window_width) // 2
+        y = 10  # Небольшой отступ сверху
+
+        # Устанавливаем размер и позицию
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Устанавливаем минимальный размер окна
+        self.root.minsize(600, 400)
+
+    def setup_scroll_keys(self):
+        """Настройка клавиш для прокрутки"""
+        # Page Up / Page Down
+        self.root.bind('<Prior>', lambda e: self.ui.canvas.yview_scroll(-1, 'pages'))
+        self.root.bind('<Next>', lambda e: self.ui.canvas.yview_scroll(1, 'pages'))
+
+        # Home / End
+        self.root.bind('<Home>', lambda e: self.ui.scroll_to_top())
+        self.root.bind('<End>', lambda e: self.ui.scroll_to_bottom())
 
     def bind_sheet_events(self):
         """Привязка событий для обновления имен файлов"""
@@ -126,11 +165,17 @@ class GoogleSheetsSyncApp:
 
     def apply_theme(self):
         """Применение темы"""
-        self.theme_manager.apply_theme(self.ui.log_text)
+        self.theme_manager.apply_theme(
+            log_text_widget=self.ui.log_text,
+            canvas_widget=self.ui.canvas
+        )
 
     def toggle_theme(self):
         """Переключение темы"""
-        self.theme_manager.toggle_theme(self.ui.log_text)
+        self.theme_manager.toggle_theme(
+            log_text_widget=self.ui.log_text,
+            canvas_widget=self.ui.canvas
+        )
         theme_name = self.theme_manager.theme_var.get()
         self.ui.theme_button.config(text="☀️ Светлая тема" if theme_name == "dark" else "🌙 Темная тема")
         self.logger.log(f"Применена {'темная' if theme_name == 'dark' else 'светлая'} тема")
@@ -220,18 +265,87 @@ class GoogleSheetsSyncApp:
                 else:
                     label.config(text="→ Индекс вне диапазона")
 
+    def set_status_not_authorized(self):
+        """Установка статуса 'Не авторизован'"""
+        self.set_status("Статус: Не авторизован", 'orange')
+
+    def set_status_authorized(self):
+        """Установка статуса 'Авторизован'"""
+        self.set_status("Статус: Авторизован", 'green')
+
+    def set_status_error(self, error_message=None):
+        """Установка статуса ошибки"""
+        if error_message:
+            self.set_status(f"Статус: {error_message}", 'red')
+        else:
+            self.set_status("Статус: Ошибка", 'red')
+
+    def set_status(self, text, color='orange'):
+        """Установка текста и цвета статуса
+
+        Args:
+            text: Текст статуса
+            color: Цвет ('orange', 'green', 'red' или HEX код)
+        """
+        color_map = {
+            'orange': '#ff8800',
+            'green': '#00cc00',
+            'red': '#ff0000',
+            'yellow': '#ffff00',
+            'blue': '#0000ff',
+            'gray': '#808080'
+        }
+
+        if color in color_map:
+            color_code = color_map[color]
+        else:
+            color_code = color
+
+        # Устанавливаем текст
+        self.ui.status_var.set(text)
+
+        # Устанавливаем цвет, если есть label
+        if hasattr(self.ui, 'status_label'):
+            self.ui.status_label.configure(foreground=color_code)
+
     def authenticate_google(self):
         """Авторизация в Google"""
-        if not self.sheets_manager:
-            self.sheets_manager = GoogleSheetsManager(self.app_dir, self.logger)
+        try:
+            if not self.sheets_manager:
+                self.sheets_manager = GoogleSheetsManager(self.app_dir, self.logger)
 
-        if self.sheets_manager.authenticate():
-            self.ui.status_var.set("Статус: Авторизован")
-            self.ui.save_btn.config(state=tk.NORMAL)
-            self.ui.start_btn.config(state=tk.NORMAL)
+            # Устанавливаем оранжевый статус во время авторизации
+            self.set_status("Статус: Авторизация...", 'orange')
+            self.root.update()  # Обновляем UI
 
-            if self.ui.spreadsheet_id_var.get():
-                self.get_sheet_list()
+            if self.sheets_manager.authenticate():
+                # Устанавливаем зеленый статус при успехе
+                self.set_status("Статус: Авторизован", 'green')
+                self.ui.save_btn.config(state=tk.NORMAL)
+                self.ui.start_btn.config(state=tk.NORMAL)
+
+                self.logger.log("Авторизация успешна")
+
+                if self.ui.spreadsheet_id_var.get():
+                    self.get_sheet_list()
+
+                if self.ui.notify_success_var.get():
+                    messagebox.showinfo("Успех", "Авторизация успешна!")
+            else:
+                # Устанавливаем красный статус при ошибке
+                self.set_status("Статус: Ошибка авторизации", 'red')
+                self.logger.log("Ошибка авторизации")
+
+                if self.ui.notify_error_var.get():
+                    messagebox.showerror("Ошибка", "Не удалось авторизоваться")
+
+        except Exception as e:
+            # Устанавливаем красный статус при исключении
+            self.set_status("Статус: Ошибка авторизации", 'red')
+            self.logger.log(f"Ошибка авторизации: {str(e)}")
+
+            if self.ui.notify_error_var.get():
+                messagebox.showerror("Ошибка", f"Ошибка авторизации: {str(e)}")
 
     def get_sheet_list(self):
         """Получение списка листов"""
@@ -241,7 +355,6 @@ class GoogleSheetsSyncApp:
 
         spreadsheet_id = self.ui.spreadsheet_id_var.get().strip()
 
-        # Извлекаем ID из URL если нужно
         if 'docs.google.com' in spreadsheet_id:
             import re
             match = re.search(r'/d/([a-zA-Z0-9-_]+)', spreadsheet_id)
@@ -280,34 +393,23 @@ class GoogleSheetsSyncApp:
         for row in data:
             for cell in row:
                 hasher.update(str(cell).encode('utf-8'))
-                hasher.update(b'\x00')  # Разделитель между ячейками
-            hasher.update(b'\x01')  # Разделитель между строками
+                hasher.update(b'\x00')
+            hasher.update(b'\x01')
 
         return hasher.hexdigest()
 
     def save_now(self, sheet_number=None):
-        """Сохранение листов
-
-        Args:
-            sheet_number: Номер листа для сохранения (1 или 2). 
-                         Если None, сохраняются оба листа.
-        """
+        """Сохранение листов"""
         if not self.sheets_manager or not self.sheets_manager.service:
             messagebox.showwarning("Предупреждение", "Сначала авторизуйтесь")
             return
 
         if sheet_number is not None:
-            # Сохраняем только указанный лист
-            if self.save_single_sheet(sheet_number):
-                # Обновляем хэш после сохранения
-                self.update_hash_after_manual_save(sheet_number)
+            self.save_single_sheet(sheet_number)
         else:
-            # Сохраняем оба листа
             for sheet_num in [1, 2]:
-                if self.save_single_sheet(sheet_num):
-                    self.update_hash_after_manual_save(sheet_num)
+                self.save_single_sheet(sheet_num)
 
-        # Показываем уведомление о завершении
         output_folder = self.ui.folder_path_var.get().strip() or self.file_manager.get_default_save_folder()
 
         if sheet_number is None and self.ui.notify_success_var.get():
@@ -326,7 +428,6 @@ class GoogleSheetsSyncApp:
             newline = '\r\n' if self.ui.newline_var.get() == 'windows' else '\n'
             encoding = self.ui.encoding_var.get()
 
-            # Получаем настройки для конкретного листа
             if sheet_number == 1:
                 save_enabled = self.ui.sheet1_settings.save_enabled_var.get()
                 filename = self.ui.sheet1_settings.filename_var.get().strip()
@@ -342,14 +443,12 @@ class GoogleSheetsSyncApp:
             if not sheet_identifier or not filename:
                 return False
 
-            # Получаем данные
             data = self.sheets_manager.get_sheet_data(spreadsheet_id, sheet_identifier)
 
             if not data:
                 self.logger.log(f"Лист {sheet_number} ({sheet_identifier}) пуст")
                 return False
 
-            # Сохраняем файл
             filepath = os.path.join(output_folder, filename)
             if self.file_manager.save_tsv(data, filepath, encoding, newline):
                 self.logger.log(f"Сохранен лист {sheet_number}: {filename}")
@@ -409,7 +508,6 @@ class GoogleSheetsSyncApp:
                 current_time = time.time()
 
                 for sheet_num in [1, 2]:
-                    # Получаем настройки
                     if sheet_num == 1:
                         save_enabled = self.ui.sheet1_settings.save_enabled_var.get()
                         check_interval = self.ui.sheet1_settings.check_interval_var.get()
@@ -417,16 +515,11 @@ class GoogleSheetsSyncApp:
                         save_enabled = self.ui.sheet2_settings.save_enabled_var.get()
                         check_interval = self.ui.sheet2_settings.check_interval_var.get()
 
-                    # Проверяем, нужно ли проверять этот лист
                     if (save_enabled and
                             current_time - self.last_check_time.get(sheet_num, 0) >= check_interval):
-                        # Проверяем изменения
                         self.check_and_save_sheet(sheet_num)
-
-                        # Обновляем время последней проверки
                         self.last_check_time[sheet_num] = current_time
 
-                # Небольшая пауза
                 time.sleep(5)
 
             except Exception as e:
@@ -446,40 +539,30 @@ class GoogleSheetsSyncApp:
             if not sheet_identifier:
                 return
 
-            # Получаем данные листа
             data = self.sheets_manager.get_sheet_data(spreadsheet_id, sheet_identifier)
 
             if not data:
                 return
 
-            # Создаем детальный отпечаток данных
             data_fingerprint = self.create_data_fingerprint(data)
 
-            # Проверяем, есть ли сохраненный хэш
             if sheet_number not in self.last_data_hash:
-                # Первая проверка - инициализируем хэш
                 self.last_data_hash[sheet_number] = data_fingerprint
                 self.last_data_content[sheet_number] = data
                 self.logger.log(f"Инициализация мониторинга для листа {sheet_number}")
                 return
 
-            # Сравниваем хэши
             if self.last_data_hash[sheet_number] == data_fingerprint:
-                # Данные не изменились
                 return
 
-            # Данные изменились
             self.logger.log(f"Обнаружены изменения в листе {sheet_number} ({sheet_identifier})")
 
-            # Показываем уведомление
             if self.ui.notify_changes_var.get():
                 self.root.after(0, lambda: messagebox.showinfo("Изменения",
                                                                "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
 
-            # Сохраняем измененный лист
             save_success = self.save_single_sheet(sheet_number)
 
-            # ВАЖНО: Обновляем хэш сразу после сохранения
             if save_success:
                 self.last_data_hash[sheet_number] = data_fingerprint
                 self.last_data_content[sheet_number] = data
@@ -642,51 +725,3 @@ class GoogleSheetsSyncApp:
         self.stop_monitoring()
         self.tray_manager.stop()
         self.root.destroy()
-
-    def update_hash_after_manual_save(self, sheet_num):
-        pass
-
-    def setup_scroll_keys(self):
-        """Настройка клавиш для прокрутки"""
-        # Page Up / Page Down
-        self.root.bind('<Prior>', lambda e: self.ui.canvas.yview_scroll(-1, 'pages'))
-        self.root.bind('<Next>', lambda e: self.ui.canvas.yview_scroll(1, 'pages'))
-
-        # Home / End
-        self.root.bind('<Home>', lambda e: self.ui.scroll_to_top())
-        self.root.bind('<End>', lambda e: self.ui.scroll_to_bottom())
-
-        # Стрелки вверх/вниз
-        self.root.bind('<Up>', lambda e: self.ui.canvas.yview_scroll(-1, 'units'))
-        self.root.bind('<Down>', lambda e: self.ui.canvas.yview_scroll(1, 'units'))
-
-
-
-def update_hash_after_manual_save(self, sheet_number=None):
-    """Обновление хэша после ручного сохранения"""
-    try:
-        spreadsheet_id = self.ui.spreadsheet_id_var.get().strip()
-
-        if not spreadsheet_id:
-            return
-
-        sheets_to_update = [1, 2] if sheet_number is None else [sheet_number]
-
-        for sheet_num in sheets_to_update:
-            sheet_identifier = self.get_current_sheet_name(sheet_num)
-
-            if not sheet_identifier:
-                continue
-
-            # Получаем данные
-            data = self.sheets_manager.get_sheet_data(spreadsheet_id, sheet_identifier)
-
-            if data:
-                # Обновляем хэш
-                data_fingerprint = self.create_data_fingerprint(data)
-                self.last_data_hash[sheet_num] = data_fingerprint
-                self.last_data_content[sheet_num] = data
-                self.logger.log(f"Хэш обновлен для листа {sheet_num} после ручного сохранения")
-
-    except Exception as e:
-        self.logger.log(f"Ошибка обновления хэша: {str(e)}")
