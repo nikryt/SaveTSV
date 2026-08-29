@@ -7,24 +7,30 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-13  # Используем Intel Mac для x86_64
     strategy:
       matrix:
-        arch: [x86_64, arm64]
-      fail-fast: false  # Продолжать сборку даже если одна архитектура упала
+        include:
+          - arch: x86_64
+            runner: macos-13
+            python-version: '3.11'
+          - arch: arm64
+            runner: macos-latest
+            python-version: '3.11'
+      fail-fast: false
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4  # Обновлено до v4
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/setup-python@v5  # Обновлено до v5
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.11'  # Используем более новую версию
         architecture: ${{ matrix.arch }}
 
     - name: Cache dependencies
-      uses: actions/cache@v4  # Обновлено до v4
+      uses: actions/cache@v4
       with:
         path: ~/Library/Caches/pip
         key: ${{ runner.os }}-${{ matrix.arch }}-pip-${{ hashFiles('requirements.txt') }}
@@ -52,47 +58,8 @@ jobs:
           main.py
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v4  # Обновлено до v4
+      uses: actions/upload-artifact@v4
       with:
         name: GoogleSheetsSync-${{ matrix.arch }}
         path: dist/GoogleSheetsSync-${{ matrix.arch }}
-        retention-days: 30
-
-  create-universal:
-    needs: build-macos
-    runs-on: macos-latest
-
-    steps:
-    - name: Download x86_64
-      uses: actions/download-artifact@v4  # Обновлено до v4
-      with:
-        name: GoogleSheetsSync-x86_64
-        path: artifacts/x86_64
-
-    - name: Download arm64
-      uses: actions/download-artifact@v4  # Обновлено до v4
-      with:
-        name: GoogleSheetsSync-arm64
-        path: artifacts/arm64
-
-    - name: Create universal binary
-      run: |
-        # Проверяем наличие файлов
-        ls -la artifacts/x86_64/
-        ls -la artifacts/arm64/
-        
-        # Создаем universal binary
-        lipo -create \
-          artifacts/x86_64/GoogleSheetsSync-x86_64 \
-          artifacts/arm64/GoogleSheetsSync-arm64 \
-          -output GoogleSheetsSync-universal
-        
-        # Проверяем результат
-        file GoogleSheetsSync-universal
-
-    - name: Upload universal binary
-      uses: actions/upload-artifact@v4  # Обновлено до v4
-      with:
-        name: GoogleSheetsSync-universal
-        path: GoogleSheetsSync-universal
         retention-days: 30
