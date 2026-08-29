@@ -3,6 +3,7 @@ import json
 import time
 import threading
 import platform
+import hashlib
 import tkinter as tk
 from tkinter import messagebox, filedialog
 
@@ -40,6 +41,11 @@ class GoogleSheetsSyncApp:
         self.available_sheets = []
         self.sheet_names_cache = {}
 
+        # Данные для мониторинга
+        self.last_data_hash = {}
+        self.last_check_time = {}
+        self.last_data_content = {}  # Хранение последних данных для сравнения
+
         # Инициализация UI
         self.ui = MainWindow(self.root, self)
 
@@ -67,6 +73,32 @@ class GoogleSheetsSyncApp:
         # Инициализация UI
         self.toggle_selection_method()
         self.toggle_auto_filename()
+
+        # Привязываем события для обновления имен файлов
+        self.bind_sheet_events()
+
+    def bind_sheet_events(self):
+        """Привязка событий для обновления имен файлов"""
+        # Для листа 1
+        self.ui.sheet1_settings.name_combo.bind('<<ComboboxSelected>>',
+                                                lambda e: self.update_filename_from_sheet())
+        self.ui.sheet1_settings.index_spinbox.bind('<KeyRelease>',
+                                                   lambda e: self.on_sheet_index_changed(1))
+        self.ui.sheet1_settings.index_spinbox.bind('<ButtonRelease>',
+                                                   lambda e: self.on_sheet_index_changed(1))
+
+        # Для листа 2
+        self.ui.sheet2_settings.name_combo.bind('<<ComboboxSelected>>',
+                                                lambda e: self.update_filename_from_sheet())
+        self.ui.sheet2_settings.index_spinbox.bind('<KeyRelease>',
+                                                   lambda e: self.on_sheet_index_changed(2))
+        self.ui.sheet2_settings.index_spinbox.bind('<ButtonRelease>',
+                                                   lambda e: self.on_sheet_index_changed(2))
+
+    def on_sheet_index_changed(self, sheet_number):
+        """Обработка изменения индекса листа"""
+        self.update_index_labels()
+        self.update_filename_from_sheet()
 
     def detect_os(self):
         """Определение операционной системы"""
@@ -114,16 +146,19 @@ class GoogleSheetsSyncApp:
         if method == "by_name":
             self.ui.sheet1_settings.show_name_selection()
             self.ui.sheet2_settings.show_name_selection()
+            self.logger.log("Режим выбора: по имени листа")
         else:
             self.ui.sheet1_settings.show_index_selection()
             self.ui.sheet2_settings.show_index_selection()
             self.update_index_labels()
+            self.logger.log("Режим выбора: по индексу листа")
 
     def toggle_auto_filename(self):
         """Переключение автоопределения имени файла"""
         if self.ui.auto_filename.get():
             self.ui.sheet1_settings.filename_entry.config(state=tk.DISABLED)
             self.ui.sheet2_settings.filename_entry.config(state=tk.DISABLED)
+            self.update_filename_from_sheet()
         else:
             self.ui.sheet1_settings.filename_entry.config(state=tk.NORMAL)
             self.ui.sheet2_settings.filename_entry.config(state=tk.NORMAL)
@@ -198,6 +233,7 @@ class GoogleSheetsSyncApp:
 
         spreadsheet_id = self.ui.spreadsheet_id_var.get().strip()
 
+        # Извлекаем ID из URL если нужно
         if 'docs.google.com' in spreadsheet_id:
             import re
             match = re.search(r'/d/([a-zA-Z0-9-_]+)', spreadsheet_id)
@@ -222,41 +258,97 @@ class GoogleSheetsSyncApp:
             self.update_filename_from_sheet()
 
             self.logger.log(f"Загружено листов: {len(self.available_sheets)}")
+            self.logger.log(f"Доступные листы: {', '.join(self.available_sheets)}")
 
-    def save_now(self):
-        """Немедленное сохранение"""
+            if self.ui.notify_success_var.get():
+                messagebox.showinfo("Успех",
+                                    f"Найдено листов: {len(self.available_sheets)}\n\n" +
+                                    "\n".join(f"{i}. {name}" for i, name in enumerate(self.available_sheets)))
+
+    def create_data_fingerprint(self, data):
+        """Создание уникального отпечатка данных"""
+        hasher = hashlib.md5()
+
+        for row in data:
+            for cell in row:
+                hasher.update(str(cell).encode('utf-8'))
+                hasher.update(b'\x00')  # Разделитель между ячейками
+            hasher.update(b'\x01')  # Разделитель между строками
+
+        return hasher.hexdigest()
+
+    def save_now(self, sheet_number=None):
+        """Сохранение листов
+
+        Args:
+            sheet_number: Номер листа для сохранения (1 или 2).
+                         Если None, сохраняются оба листа.
+        """
         if not self.sheets_manager or not self.sheets_manager.service:
             messagebox.showwarning("Предупреждение", "Сначала авторизуйтесь")
             return
 
-        spreadsheet_id = self.ui.spreadsheet_id_var.get().strip()
+        if sheet_number is not None:
+            # Сохраняем только указанный лист
+            self.save_single_sheet(sheet_number)
+        else:
+            # Сохраняем оба листа
+            for sheet_num in [1, 2]:
+                self.save_single_sheet(sheet_num)
+
+        # Показываем уведомление о завершении
         output_folder = self.ui.folder_path_var.get().strip() or self.file_manager.get_default_save_folder()
-        self.file_manager.ensure_folder_exists(output_folder)
 
-        newline = '\r\n' if self.ui.newline_var.get() == 'windows' else '\n'
-        encoding = self.ui.encoding_var.get()
+        if sheet_number is None and self.ui.notify_success_var.get():
+            messagebox.showinfo("Успех", f"Данные сохранены в:\n{output_folder}")
 
-        for sheet_num in [1, 2]:
-            if sheet_num == 1:
+    def save_single_sheet(self, sheet_number):
+        """Сохранение только одного листа"""
+        try:
+            if not self.sheets_manager or not self.sheets_manager.service:
+                return False
+
+            spreadsheet_id = self.ui.spreadsheet_id_var.get().strip()
+            output_folder = self.ui.folder_path_var.get().strip() or self.file_manager.get_default_save_folder()
+            self.file_manager.ensure_folder_exists(output_folder)
+
+            newline = '\r\n' if self.ui.newline_var.get() == 'windows' else '\n'
+            encoding = self.ui.encoding_var.get()
+
+            # Получаем настройки для конкретного листа
+            if sheet_number == 1:
                 save_enabled = self.ui.sheet1_settings.save_enabled_var.get()
+                filename = self.ui.sheet1_settings.filename_var.get().strip()
             else:
                 save_enabled = self.ui.sheet2_settings.save_enabled_var.get()
+                filename = self.ui.sheet2_settings.filename_var.get().strip()
 
             if not save_enabled:
-                continue
+                return False
 
-            sheet_identifier = self.get_current_sheet_name(sheet_num)
-            if sheet_num == 1:
-                filename = self.ui.sheet1_settings.filename_var.get()
+            sheet_identifier = self.get_current_sheet_name(sheet_number)
+
+            if not sheet_identifier or not filename:
+                return False
+
+            # Получаем данные
+            data = self.sheets_manager.get_sheet_data(spreadsheet_id, sheet_identifier)
+
+            if not data:
+                self.logger.log(f"Лист {sheet_number} ({sheet_identifier}) пуст")
+                return False
+
+            # Сохраняем файл
+            filepath = os.path.join(output_folder, filename)
+            if self.file_manager.save_tsv(data, filepath, encoding, newline):
+                self.logger.log(f"Сохранен лист {sheet_number}: {filename}")
+                return True
             else:
-                filename = self.ui.sheet2_settings.filename_var.get()
+                return False
 
-            if sheet_identifier and filename:
-                data = self.sheets_manager.get_sheet_data(spreadsheet_id, sheet_identifier)
-                if data:
-                    filepath = os.path.join(output_folder, filename)
-                    if self.file_manager.save_tsv(data, filepath, encoding, newline):
-                        self.logger.log(f"Сохранено: {filename}")
+        except Exception as e:
+            self.logger.log(f"Ошибка сохранения листа {sheet_number}: {str(e)}")
+            return False
 
     def start_autosave(self):
         """Запуск автосохранения"""
@@ -270,6 +362,9 @@ class GoogleSheetsSyncApp:
         self.tray_manager.update_icon(True, self.theme_manager.theme_var.get())
         self.logger.log("Авто-сохранение запущено")
 
+        if self.tray_manager.tray_icon:
+            self.tray_manager.notify("Автосохранение включено", "Google Sheets Sync начал мониторинг изменений")
+
     def stop_autosave(self):
         """Остановка автосохранения"""
         self.is_running = False
@@ -277,6 +372,9 @@ class GoogleSheetsSyncApp:
         self.stop_monitoring()
         self.tray_manager.update_icon(False, self.theme_manager.theme_var.get())
         self.logger.log("Авто-сохранение остановлено")
+
+        if self.tray_manager.tray_icon:
+            self.tray_manager.notify("Автосохранение выключено", "Мониторинг изменений остановлен")
 
     def toggle_auto_save(self):
         """Переключение автосохранения"""
@@ -291,6 +389,7 @@ class GoogleSheetsSyncApp:
         self.monitoring_thread.start()
         self.last_check_time = {1: time.time(), 2: time.time()}
         self.last_data_hash = {}
+        self.last_data_content = {}
 
     def monitor_loop(self):
         """Цикл мониторинга"""
@@ -299,6 +398,7 @@ class GoogleSheetsSyncApp:
                 current_time = time.time()
 
                 for sheet_num in [1, 2]:
+                    # Получаем настройки
                     if sheet_num == 1:
                         save_enabled = self.ui.sheet1_settings.save_enabled_var.get()
                         check_interval = self.ui.sheet1_settings.check_interval_var.get()
@@ -306,40 +406,74 @@ class GoogleSheetsSyncApp:
                         save_enabled = self.ui.sheet2_settings.save_enabled_var.get()
                         check_interval = self.ui.sheet2_settings.check_interval_var.get()
 
+                    # Проверяем, нужно ли проверять этот лист
                     if (save_enabled and
                             current_time - self.last_check_time.get(sheet_num, 0) >= check_interval):
+                        # Проверяем изменения
                         self.check_and_save_sheet(sheet_num)
+
+                        # Обновляем время последней проверки
                         self.last_check_time[sheet_num] = current_time
 
-                time.sleep(5)
+                time.sleep(5)  # Пауза между циклами
+
             except Exception as e:
                 self.logger.log(f"Ошибка в цикле мониторинга: {str(e)}")
                 time.sleep(10)
 
     def check_and_save_sheet(self, sheet_number):
-        """Проверка и сохранение листа"""
+        """Проверка и сохранение конкретного листа"""
         try:
             spreadsheet_id = self.ui.spreadsheet_id_var.get().strip()
-            sheet_identifier = self.get_current_sheet_name(sheet_number)
 
-            if not spreadsheet_id or not sheet_identifier:
+            if not spreadsheet_id:
                 return
 
+            # Получаем идентификатор листа
+            sheet_identifier = self.get_current_sheet_name(sheet_number)
+
+            if not sheet_identifier:
+                return
+
+            # Получаем данные листа
             data = self.sheets_manager.get_sheet_data(spreadsheet_id, sheet_identifier)
+
             if not data:
                 return
 
-            current_hash = hash(str(data))
+            # Создаем детальный отпечаток данных
+            data_fingerprint = self.create_data_fingerprint(data)
 
-            if sheet_number not in self.last_data_hash or self.last_data_hash[sheet_number] != current_hash:
-                self.logger.log(f"Обнаружены изменения в листе {sheet_number}")
+            # Проверяем, были ли изменения
+            if sheet_number in self.last_data_hash:
+                if self.last_data_hash[sheet_number] == data_fingerprint:
+                    # Данные не изменились
+                    return
+                else:
+                    # Данные изменились
+                    self.logger.log(f"Обнаружены изменения в листе {sheet_number} ({sheet_identifier})")
 
-                if self.ui.notify_changes_var.get():
-                    self.root.after(0, lambda: messagebox.showinfo("Изменения",
-                                                                   "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
+                    # Показываем уведомление об изменениях
+                    if self.ui.notify_changes_var.get():
+                        self.root.after(0, lambda: messagebox.showinfo("Изменения",
+                                                                       "Обнаружены изменения в таблице. Обнови в PhotoMechanic, Reload All. Выполняется сохранение файлов..."))
+            else:
+                # Первая проверка, просто сохраняем хэш
+                self.last_data_hash[sheet_number] = data_fingerprint
+                self.last_data_content[sheet_number] = data
+                return
 
-                self.save_now()
-                self.last_data_hash[sheet_number] = current_hash
+            # Сохраняем ТОЛЬКО измененный лист
+            if self.save_single_sheet(sheet_number):
+                # Обновляем хэш после успешного сохранения
+                self.last_data_hash[sheet_number] = data_fingerprint
+                self.last_data_content[sheet_number] = data
+
+                # Показываем уведомление об успешном сохранении
+                if self.ui.notify_autosave_var.get() and self.ui.notify_success_var.get():
+                    filename = self.ui.sheet1_settings.filename_var.get() if sheet_number == 1 else self.ui.sheet2_settings.filename_var.get()
+                    self.root.after(0, lambda: messagebox.showinfo("Сохранено",
+                                                                   f"Файл {filename} успешно сохранен"))
 
         except Exception as e:
             self.logger.log(f"Ошибка проверки листа {sheet_number}: {str(e)}")
@@ -378,6 +512,7 @@ class GoogleSheetsSyncApp:
         folder = filedialog.askdirectory()
         if folder:
             self.ui.folder_path_var.set(folder)
+            self.logger.log(f"Выбрана папка: {folder}")
 
     def save_log(self):
         """Сохранение журнала"""
@@ -405,12 +540,14 @@ class GoogleSheetsSyncApp:
 
             if len(sheets) > 0:
                 self.ui.sheet1_settings.name_var.set(sheets[0].get('name', ''))
+                self.ui.sheet1_settings.index_var.set(sheets[0].get('index', 0))
                 self.ui.sheet1_settings.filename_var.set(sheets[0].get('output_filename', 'sheet1.tsv'))
                 self.ui.sheet1_settings.check_interval_var.set(sheets[0].get('check_interval', 30))
                 self.ui.sheet1_settings.save_enabled_var.set(sheets[0].get('save_enabled', True))
 
             if len(sheets) > 1:
                 self.ui.sheet2_settings.name_var.set(sheets[1].get('name', ''))
+                self.ui.sheet2_settings.index_var.set(sheets[1].get('index', 1))
                 self.ui.sheet2_settings.filename_var.set(sheets[1].get('output_filename', 'sheet2.tsv'))
                 self.ui.sheet2_settings.check_interval_var.set(sheets[1].get('check_interval', 300))
                 self.ui.sheet2_settings.save_enabled_var.set(sheets[1].get('save_enabled', True))
@@ -423,6 +560,8 @@ class GoogleSheetsSyncApp:
             self.ui.notify_error_var.set(notifications.get('error', True))
             self.ui.notify_autosave_var.set(notifications.get('autosave', False))
             self.ui.notify_changes_var.set(notifications.get('changes', True))
+
+            self.logger.log("Конфигурация загружена")
 
     def save_config(self):
         """Сохранение конфигурации"""
@@ -491,10 +630,3 @@ class GoogleSheetsSyncApp:
         self.stop_monitoring()
         self.tray_manager.stop()
         self.root.destroy()
-
-
-def create_app():
-    """Создание приложения"""
-    root = tk.Tk()
-    app = GoogleSheetsSyncApp(root)
-    return app, root
