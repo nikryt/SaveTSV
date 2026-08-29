@@ -1,4 +1,4 @@
-name: Build macOS App with Beautiful DMG
+name: Build macOS App (Simple)
 
 on:
   push:
@@ -24,41 +24,28 @@ jobs:
         pip install -r requirements.txt
         pip install pyinstaller
 
-    - name: Install create-dmg
-      run: |
-        brew install create-dmg
-
     - name: Build .app bundle
       run: |
         pyinstaller \
           --windowed \
           --name "GoogleSheetsSync" \
-          --osx-bundle-identifier "com.googlesheets.sync" \
           --hidden-import=googleapiclient.discovery \
           --hidden-import=google_auth_oauthlib \
           --collect-all googleapiclient \
           --collect-all google_auth_oauthlib \
           main.py
 
-    - name: Create beautiful DMG
+    - name: Create ZIP
       run: |
-        create-dmg \
-          --volname "Google Sheets Sync" \
-          --volicon "icon.icns" \
-          --window-pos 200 120 \
-          --window-size 800 400 \
-          --icon-size 100 \
-          --icon "GoogleSheetsSync.app" 200 190 \
-          --hide-extension "GoogleSheetsSync.app" \
-          --app-drop-link 600 185 \
-          "GoogleSheetsSync.dmg" \
-          "dist/"
+        cd dist
+        zip -r ../GoogleSheetsSync-macOS.zip GoogleSheetsSync.app
+        cd ..
 
-    - name: Upload DMG
+    - name: Upload ZIP
       uses: actions/upload-artifact@v4
       with:
-        name: GoogleSheetsSync-DMG
-        path: GoogleSheetsSync.dmg
+        name: GoogleSheetsSync-macOS
+        path: GoogleSheetsSync-macOS.zip
         retention-days: 30
 
 
