@@ -1,5 +1,5 @@
 {
-  "spreadsheet_id": "",
+  "spreadsheet_id": "1ZTQ1Mq54UBA5pc7ngxxWf7sCiwN7BTCIq4Ok_qO3Qw4",
   "selection_method": "by_index",
   "auto_filename": true,
   "encoding": "utf-8",
@@ -8,14 +8,14 @@
   "sheets": [
     {
       "index": 0,
-      "output_filename": "",
+      "output_filename": "Day 1.tsv",
       "check_interval": 30,
       "save_enabled": true
     },
     {
       "index": 1,
-      "output_filename": "",
-      "check_interval": 300,
+      "output_filename": "ПУТЬ.tsv",
+      "check_interval": 30,
       "save_enabled": true
     }
   ],
