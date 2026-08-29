@@ -1,0 +1,79 @@
+name: Build macOS App Multi-Arch
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [x86_64, arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        architecture: ${{ matrix.arch }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --onefile \
+          --windowed \
+          --name "GoogleSheetsSync-${{ matrix.arch }}" \
+          --target-arch ${{ matrix.arch }} \
+          --hidden-import=googleapiclient.discovery \
+          --hidden-import=google_auth_oauthlib \
+          --collect-all googleapiclient \
+          --collect-all google_auth_oauthlib \
+          main.py
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: GoogleSheetsSync-${{ matrix.arch }}
+        path: dist/GoogleSheetsSync-${{ matrix.arch }}
+        retention-days: 30
+
+  create-universal:
+    needs: build-macos
+    runs-on: macos-latest
+
+    steps:
+    - name: Download x86_64
+      uses: actions/download-artifact@v3
+      with:
+        name: GoogleSheetsSync-x86_64
+        path: artifacts/x86_64
+
+    - name: Download arm64
+      uses: actions/download-artifact@v3
+      with:
+        name: GoogleSheetsSync-arm64
+        path: artifacts/arm64
+
+    - name: Create universal binary
+      run: |
+        lipo -create \
+          artifacts/x86_64/GoogleSheetsSync-x86_64 \
+          artifacts/arm64/GoogleSheetsSync-arm64 \
+          -output GoogleSheetsSync-universal
+
+    - name: Upload universal binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: GoogleSheetsSync-universal
+        path: GoogleSheetsSync-universal
+        retention-days: 30
