@@ -1,0 +1,24 @@
+{
+  "spreadsheet_id": "ID",
+  "selection_method": "by_index",
+  "auto_filename": true,
+  "sheets": [
+    {
+      "index": 0,
+      "output_filename": ""
+    },
+    {
+      "index": 1,
+      "output_filename": ""
+    }
+  ],
+  "output_folder": "SaveSheets",
+  "update_interval_minutes": 5,
+  "auto_monitor_changes": true,
+  "notifications": {
+    "success": true,
+    "error": true,
+    "autosave": false,
+    "changes": true
+  }
+}
